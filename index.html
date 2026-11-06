@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<title>Maps</title>
+<style>
+  /* =========================================================
+     색상 — 여기 값만 바꿔도 전체 분위기가 바뀝니다
+     ========================================================= */
+  :root {
+    --surface:  #ffffff;
+    --ink:      #111111;   /* 기본 글자 */
+    --sub:      #7a7a7a;   /* 보조 글자 */
+    --line:     #e6e6e6;   /* 테두리·구분선 */
+    --primary:  #111111;   /* 포인트 (블랙) */
+    --tint:     #efefef;   /* 선택된 탭 배경 */
+    --origin:   #111111;   /* 출발 점 */
+    --dest:     #111111;   /* 목적지 핀 */
+    --shadow:   0 1px 2px rgba(0,0,0,.08), 0 4px 14px rgba(0,0,0,.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: #f3f3f3; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", "Apple SD Gothic Neo", sans-serif;
+    color: var(--ink); -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+
+  .app {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* ---------- 지도 ---------- */
+  #map { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; background: #f3f3f3; }
+  .mm { overflow: hidden; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+  .mm:active { cursor: grabbing; }
+  .mm-tiles { position: absolute; top: 0; right: 0; bottom: 0; left: 0; filter: grayscale(1) brightness(1.03) contrast(.92); }
+  .mm-tile { position: absolute; left: 0; top: 0; width: 256px; height: 256px; transform-origin: 0 0;
+    opacity: 0; transition: opacity .25s; pointer-events: none; -webkit-user-drag: none; }
+  .mm-tile.ok { opacity: 1; }
+  .mm-base { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .mm-base svg { display: block; width: 100%; height: 100%; }
+  /* 자세한 지도 가장자리를 부드럽게 흐려서 넓은 지도와 자연스럽게 이어지게 */
+  .mm-base.detail {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-composite: source-in; mask-composite: intersect;
+    mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+  }
+  .mm-markers { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
+  .mm-marker { position: absolute; left: 0; top: 0; will-change: transform; }
+  .mm-attrib {
+    position: absolute; right: 0; bottom: calc(var(--safe-bottom) + 72px); z-index: 3;
+    font-size: 9px; color: #999; background: rgba(255,255,255,.7); padding: 1px 6px; pointer-events: none;
+  }
+  .map-note {
+    position: absolute; z-index: 400; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    font-size: 13px; color: var(--sub); text-align: center; line-height: 1.6; display: none;
+  }
+
+  /* 지도 글자 */
+  .area {
+    display: inline-block; transform: translate(-50%, -50%); white-space: nowrap;
+    font-size: 9.5px; font-weight: 500; color: #9a9a9a; letter-spacing: .14em; text-transform: uppercase;
+    text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff;
+  }
+  .hide-areas .area { display: none; }
+  .road { display: inline-block; white-space: nowrap; font-size: 10px; color: #8d8d8d; letter-spacing: .02em;
+    text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; }
+  .poi { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .poi-icon {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #fff;
+    display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  }
+  .poi-label { font-size: 12px; font-weight: 500; letter-spacing: -.05px; text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff; }
+
+  /* ---------- 경로 카드 ---------- */
+  .route {
+    position: absolute; z-index: 500;
+    top: calc(var(--safe-top) + 10px); left: 12px; right: 12px;
+    background: var(--surface); border-radius: 14px; box-shadow: var(--shadow);
+    display: grid; grid-template-columns: 44px 1fr; padding: 8px 10px 8px 0; row-gap: 8px;
+  }
+  .rail { grid-row: 1 / 3; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 14px 0 12px; }
+  .rail .o { width: 18px; height: 18px; border-radius: 50%; background: #ececec; display: flex; align-items: center; justify-content: center; }
+  .rail .o::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--origin); }
+  .rail .dots { display: flex; flex-direction: column; gap: 3px; }
+  .rail .dots i { width: 2.5px; height: 2.5px; border-radius: 50%; background: #b5b5b5; display: block; }
+  .field {
+    height: 42px; border: 1px solid var(--line); border-radius: 10px;
+    display: flex; align-items: center; padding: 0 6px 0 12px; font-size: 15px; letter-spacing: -.1px;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .field-o { color: var(--ink); }
+  .field-d:focus-within { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+  .field-d input {
+    flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent;
+    font: inherit; color: var(--ink); -webkit-appearance: none; appearance: none; border-radius: 0;
+  }
+  .field-d input::placeholder { color: var(--sub); }
+  .field-d input::-webkit-search-cancel-button { display: none; }
+  .go {
+    flex: none; width: 30px; height: 30px; border-radius: 8px; border: 0; cursor: pointer; background: transparent;
+    display: flex; align-items: center; justify-content: center; transition: background .2s;
+  }
+  .route.typing .go { background: var(--primary); }
+  .route.typing .go path { stroke: #fff; }
+  .shake { animation: shake .4s; }
+  @keyframes shake { 20%,60% { transform: translateX(-5px); } 40%,80% { transform: translateX(5px); } }
+
+  /* ---------- 지도 버튼 ---------- */
+  .fab {
+    position: absolute; z-index: 500; right: 14px; border: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow);
+    transition: transform .15s, opacity .25s;
+  }
+  .fab:active { transform: scale(.94); }
+  .fab-center { width: 50px; height: 50px; border-radius: 14px; background: var(--surface); bottom: calc(var(--safe-bottom) + 152px); }
+  .fab-street { width: 56px; height: 56px; border-radius: 16px; background: var(--primary); bottom: calc(var(--safe-bottom) + 86px); }
+  .sheet-open .fab { opacity: 0; pointer-events: none; }
+
+  /* ---------- 하단 탭 (휴대폰) ---------- */
+  .nav {
+    position: absolute; z-index: 600; left: 0; right: 0; bottom: 0;
+    background: var(--surface); border-top: 1px solid var(--line);
+    padding: 8px 0 calc(var(--safe-bottom) + 6px);
+    display: flex; justify-content: space-around;
+  }
+  .tab {
+    width: 33%; background: none; border: 0; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--sub);
+  }
+  .tab .pill { width: 60px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; transition: background .2s; }
+  .tab svg { stroke: var(--sub); }
+  .tab.on { color: var(--ink); font-weight: 600; }
+  .tab.on .pill { background: var(--tint); }
+  .tab.on svg { stroke: var(--primary); }
+
+  /* ---------- 저장 목록 ---------- */
+  .sheet {
+    position: absolute; z-index: 550; left: 0; right: 0; bottom: 0;
+    max-height: 74%; overflow-y: auto;
+    padding: 8px 0 calc(var(--safe-bottom) + 84px);
+    background: var(--surface); border-radius: 20px 20px 0 0;
+    box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+    transform: translateY(105%); transition: transform .36s cubic-bezier(.2,.8,.2,1);
+  }
+  .sheet.open { transform: translateY(0); }
+  @media (max-width: 899px) { .sheet { max-height: 90%; } }
+  .sheet-handle { width: 32px; height: 4px; border-radius: 2px; background: #d5d7da; margin: 0 auto 12px; }
+  .sheet-head { padding: 4px 20px 12px; display: flex; align-items: center; justify-content: space-between; }
+  .sheet-head h2 { font-size: 21px; font-weight: 600; letter-spacing: -.3px; }
+  .sheet-close { display: none; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; cursor: pointer; align-items: center; justify-content: center; }
+  .sheet-close:hover { background: #f1f3f4; }
+  .sheet-sub { padding: 0 20px 8px; font-size: 13px; font-weight: 600; color: var(--sub); letter-spacing: .02em; }
+  .list { list-style: none; }
+  .list li { display: flex; align-items: center; gap: 14px; padding: 10px 20px; cursor: pointer; transition: background .15s; }
+  .list li:hover, .list li:active { background: #f5f6f7; }
+  .date {
+    flex: none; width: 46px; height: 46px; border-radius: 12px; background: #fff; border: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+  }
+  .date b { font-size: 16px; font-weight: 600; color: var(--primary); }
+  .date small { font-size: 8.5px; font-weight: 600; color: var(--sub); letter-spacing: .08em; margin-top: 3px; }
+  .li-text { flex: 1; min-width: 0; }
+  .li-title { font-size: 16px; font-weight: 500; letter-spacing: -.2px; }
+  .li-meta { margin-top: 3px; font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 4px; }
+  .li-more { flex: none; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; opacity: .45; }
+
+  /* ---------- 내 리뷰 ---------- */
+  .section-gap { height: 8px; background: #f4f4f4; margin: 14px 0 16px; }
+  .reviews { list-style: none; }
+  .review { padding: 4px 20px 22px; }
+  .review + .review { border-top: 1px solid var(--line); padding-top: 20px; }
+  .rv-head { display: flex; align-items: center; gap: 12px; }
+  .avatar {
+    flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 500;
+  }
+  .rv-who { flex: 1; min-width: 0; }
+  .rv-place { font-size: 15.5px; font-weight: 600; letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rv-count { font-size: 12.5px; color: var(--sub); margin-top: 2px; }
+  .rv-rate { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
+  .stars { display: flex; gap: 2px; }
+  .stars svg { display: block; }
+  .rv-time { font-size: 11.5px; color: var(--sub); background: #f1f1f1; padding: 3px 8px; border-radius: 6px; }
+  .rv-text { font-size: 15px; line-height: 1.5; letter-spacing: -.1px; white-space: pre-line; }
+  .photos { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 4px; margin-top: 14px; border-radius: 14px; overflow: hidden; }
+  .photos.one { grid-template-columns: 1fr; }
+  .photo {
+    height: 0; padding-top: 110%; background: #eee center / cover no-repeat;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; pointer-events: none;
+  }
+  .photos.one .photo { padding-top: 62.5%; }
+  .rv-foot { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+  .like {
+    width: 32px; height: 32px; margin-left: -7px; border: 0; border-radius: 50%; background: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: background .15s;
+  }
+  @media (hover: hover) { .like:hover { background: #f3f3f3; } }
+  .like svg path { fill: none; stroke: var(--ink); stroke-width: 2; transition: fill .15s; }
+  .like.on svg path { fill: var(--ink); }
+  .like.pop svg { animation: pop .35s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
+  .like-count { font-size: 12.5px; font-weight: 500; color: var(--ink); min-width: 1ch; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 전체 화면 ---------- */
+  .screen { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 2000; opacity: 0; visibility: hidden; transition: opacity .35s, visibility .35s; }
+  .screen.open { opacity: 1; visibility: visible; }
+  .screen:not(.open) { pointer-events: none; }  /* 닫히는 중인 화면이 터치를 가로채지 않게 */
+
+  #roadview { background: #000; }
+  #rvVideo { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+  .rv-close {
+    position: absolute; z-index: 5; top: calc(var(--safe-top) + 12px); left: 12px;
+    width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer;
+    background: rgba(0,0,0,.35); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  #loading { transition: opacity .5s ease, visibility .5s; }
+  #loading { background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+  .spinner { position: relative; width: 32px; height: 32px; animation: spin 1s steps(12) infinite; }
+  .spinner i { position: absolute; left: 50%; top: 0; width: 2.5px; height: 9px; margin-left: -1.25px; border-radius: 2px; background: var(--ink); transform-origin: 50% 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 14px; letter-spacing: .02em; color: var(--ink); }
+
+  /* 검색 사진 (화면 꽉 채움) */
+  #photoView { background: #000; }
+  #photoImg { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: cover;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; pointer-events: none; }
+
+  /* 하얗게 사라졌다 첫 화면으로 */
+  #whiteout { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 3000; background: #fff; opacity: 0; pointer-events: none;
+    transition: opacity var(--fade-ms, 1600ms) ease-in-out; }
+  #whiteout.on { opacity: 1; pointer-events: auto; }
+
+  /* 경로 안내 팝업 (운명) */
+  #guide { background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .guide-card {
+    min-width: 168px; max-width: 74vw; padding: 15px 20px; border-radius: 12px; background: #fff;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center;
+  }
+  .guide-text { font-size: 13.5px; font-weight: 400; letter-spacing: -.1px; color: var(--ink); }
+  /* 팝업: 아래에서 살짝 올라오며 페이드인 */
+  .guide-card { opacity: 0; }
+  #guide.open .guide-card { animation: rise .42s cubic-bezier(.22,.9,.3,1) .38s both; }  /* 배경이 깔린 뒤 살짝 늦게 */
+  #guide { transition: opacity .5s ease, visibility .5s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.98); } to { opacity: 1; transform: none; } }
+
+  .toast {
+    position: absolute; left: 50%; top: calc(var(--safe-top) + 132px); z-index: 1500;
+    transform: translate(-50%, -8px); opacity: 0; pointer-events: none;
+    background: #111; color: #fff; padding: 11px 16px; border-radius: 10px; font-size: 13.5px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.2); transition: all .25s; white-space: nowrap;
+  }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+  /* =========================================================
+     PC 화면 (가로 900px 이상)
+     ========================================================= */
+  @media (min-width: 900px) {
+    /* 왼쪽 세로 메뉴 */
+    .nav {
+      top: 0; bottom: 0; left: 0; right: auto; width: 76px;
+      flex-direction: column; justify-content: flex-start; gap: 6px;
+      padding: 16px 0; border-top: 0; border-right: 1px solid var(--line);
+    }
+    .tab { width: 100%; padding: 6px 0; font-size: 11.5px; }
+    .tab .pill { width: 52px; height: 32px; }
+    .tab:hover .pill { background: #f1f3f4; }
+    .tab.on:hover .pill { background: var(--tint); }
+
+    #map { left: 76px; }
+    .mm-attrib { bottom: 0; }
+
+    .route { top: 16px; left: 92px; right: auto; width: 392px;; transition: left .36s cubic-bezier(.2,.8,.2,1); }
+    .sheet-open .route { left: 500px; }
+    .toast { left: calc(50% + 38px); top: 24px; }
+
+    .fab { right: 20px; }
+    .fab-center { bottom: 96px; width: 44px; height: 44px; border-radius: 12px; }
+    .fab-street { bottom: 28px; width: 56px; height: 56px; }
+    .fab:hover { filter: brightness(.97); }
+    .sheet-open .fab { opacity: 1; pointer-events: auto; }
+
+    /* 저장 목록 → 왼쪽 패널 */
+    .sheet {
+      top: 0; bottom: 0; left: 76px; right: auto; width: 408px; max-height: none;
+      border-radius: 0; padding: 16px 0 24px;
+      box-shadow: 2px 0 10px rgba(0,0,0,.08);
+      transform: translateX(-105%);
+    }
+    .sheet.open { transform: translateX(0); }
+    .sheet-handle { display: none; }
+    .sheet-close { display: flex; }
+    .sheet-head { padding: 4px 16px 14px 24px; }
+    .sheet-sub, .list li { padding-left: 24px; padding-right: 20px; }
+
+    /* 로드뷰: 세로 영상을 잘리지 않게 가운데에 */
+    #rvVideo { object-fit: contain; }
+    /* 검색 사진: 위아래 꽉 차게, 비율 유지 (양옆은 검은 여백) */
+    #photoImg { width: auto; height: 100%; max-width: 100%; margin: auto; object-fit: contain; }
+    .rv-close { top: 20px; left: 20px; }
+    .rv-close:hover { background: rgba(255,255,255,.18); }
+
+    .tt-top { padding: 14px 24px 14px 16px; }
+    .tt-body { top: 69px; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <div id="map"></div>
+  <div class="map-note" id="mapNote">Map couldn't load.<br>Open this page from its web address.</div>
+
+  <!-- 경로 카드 -->
+  <form class="route" id="route" autocomplete="off">
+    <div class="rail">
+      <span class="o"></span>
+      <span class="dots"><i></i><i></i><i></i></span>
+      <svg width="16" height="20" viewBox="0 0 24 30"><path d="M12 2a9 9 0 0 0-9 9c0 6.4 9 17 9 17s9-10.6 9-17a9 9 0 0 0-9-9Z" fill="none" stroke="#111" stroke-width="2.4"/><circle cx="12" cy="11" r="3" fill="#111"/></svg>
+    </div>
+    <div class="field field-o">Your location</div>
+    <label class="field field-d">
+      <input type="search" id="dest" placeholder="Choose destination" enterkeyhint="go" aria-label="Destination">
+      <button type="submit" class="go" aria-label="Go">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="#7a7a7a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </label>
+  </form>
+
+  <!-- 지도 버튼 -->
+  <button class="fab fab-center" id="centerBtn" aria-label="Recenter">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#111111" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="m15.2 8.8-1.9 4.5-4.5 1.9 1.9-4.5 4.5-1.9Z" fill="#111111"/></svg>
+  </button>
+  <button class="fab fab-street" id="streetBtn" aria-label="Street View">
+    <svg width="22" height="28" viewBox="0 0 24 30" fill="#fff"><circle cx="12" cy="4.6" r="3.4"/><path d="M8.3 10h7.4a2.3 2.3 0 0 1 2.3 2.3V19h-2.2v9h-7.6v-9H6v-6.7A2.3 2.3 0 0 1 8.3 10Z"/></svg>
+  </button>
+
+  <!-- 저장 목록 -->
+  <section class="sheet" id="savedSheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h2>Saved</h2>
+      <button class="sheet-close" id="sheetClose" aria-label="Close">
+        <svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="#111111" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="sheet-sub">Your lists</div>
+    <ul class="list" id="savedList"></ul>
+    <div class="section-gap"></div>
+    <div class="sheet-sub">Your reviews</div>
+    <ul class="reviews" id="reviewList"></ul>
+  </section>
+
+  <!-- 탭 (휴대폰: 아래 / PC: 왼쪽) -->
+  <nav class="nav">
+    <button class="tab on" data-tab="explore">
+      <span class="pill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21s-7-7.2-7-12a7 7 0 0 1 14 0c0 4.8-7 12-7 12Z"/><circle cx="12" cy="9" r="2.3"/></svg></span>
+      Explore
+    </button>
+    <button class="tab" data-tab="saved">
+      <span class="pill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round"><path d="M6.5 3.5h11v17l-5.5-3.6-5.5 3.6v-17Z"/></svg></span>
+      Saved
+    </button>
+    <button class="tab" data-tab="contribute">
+      <span class="pill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/></svg></span>
+      Contribute
+    </button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<!-- 로드뷰 (영상, 소리 없이 반복) -->
+<section class="screen" id="roadview" aria-hidden="true">
+  <video id="rvVideo" src="roadview.mp4" muted loop playsinline preload="none"></video>
+  <button class="rv-close" id="rvClose" aria-label="Close">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+</section>
+
+<!-- 검색 사진 -->
+<section class="screen" id="photoView" aria-hidden="true">
+  <img id="photoImg" alt="" draggable="false">
+  <button class="rv-close" id="photoClose" aria-label="Close">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+</section>
+
+<!-- 경로 안내 팝업 (운명 입력 시) -->
+<section class="screen" id="guide" aria-hidden="true">
+  <div class="guide-card"><div class="guide-text" id="guideText"></div></div>
+</section>
+
+<div id="whiteout"></div>
+
+<!-- 경로 탐색 로딩 -->
+<section class="screen" id="loading" aria-hidden="true">
+  <div class="spinner" id="spinner"></div>
+  <div class="loading-text">Searching for a route...</div>
+</section>
+
+<script>
+/* =========================================================
+   ✏️ 설정 — 여기만 고치면 됩니다
+   ========================================================= */
+const CONFIG = {
+  center: [37.5512, 126.9882],   // 첫 화면 중심 (남산 일대)
+  zoom: 15,
+  // true로 바꾸면 인터넷 지도 그림(타일)도 함께 불러와요. false면 사이트 안에 그려 둔 지도만 써서 항상 떠요.
+  onlineTiles: false,
+
+  // ※ 검색어는 대소문자·띄어쓰기를 구분하지 않아요 (Kim Woonhak = kimwoonhak)
+
+  // '운명' — 3초 로딩 → 안내 팝업 → 터치 → 두 번째 팝업 (이후 고정, 새로고침하면 처음으로)
+  destiny: {
+    words: ['운명', 'destiny'],
+    loadingMs: 3000,
+    messages: ['Starting route to Destiny', 'Are you ready?'],
+    fadeMs: 1600,   // 마지막 팝업 터치 후 하얗게 사라지는 시간 / 첫 화면이 나타나는 시간
+  },
+
+  // 이름 검색 — 1초 로딩 후 사진이 화면 가득
+  searchPhotos: [
+    { words: ['김운학', '운학', 'kimwoonhak', 'woonhak'], src: 'search/woonhak.jpg' },
+    { words: ['명재현', '재현', 'myeongjaehyun', 'jaehyun'], src: 'search/jaehyun.jpg' },
+  ],
+  photoLoadingMs: 1000,
+
+  // 로드뷰 영상 파일 이름은 아래쪽 <video src="roadview.mp4"> 에서 바꿀 수 있어요.
+
+  // 저장 목록 — 날짜 / 제목 / 장소 개수
+  savedLists: [
+    { date: '11/11', title: 'Teaser',     places: 11 },
+    { date: '11/21', title: 'Time Table', places: 29 },
+    { date: '12/11', title: 'Line up',    places: 12 },
+    { date: '12/20', title: 'Preview',    places: 4 },
+    { date: '12/21', title: 'Open',       places: 63 },
+  ],
+
+  // 내 리뷰 — 사진은 reviews 폴더에 넣고 파일명을 적으세요
+  // id는 좋아요 상태를 저장하는 이름이라, 한 번 정하면 바꾸지 마세요
+  reviews: [
+    { id: 'namsan',  place: 'N Seoul Tower', stars: 4, text: 'Destiny Boys Forever',
+      photos: ['reviews/r1-1.jpg', 'reviews/r1-2.jpg'] },
+    { id: 'chicago', place: 'Chicago', stars: 4, text: "Let's goooooooo!!!",
+      photos: ['reviews/r2-1.jpg', 'reviews/r2-2.jpg'] },
+    { id: 'dosan',   place: 'Dosan-daero 90-gil, Gangnam-gu, Seoul', stars: 4, text: 'Where it all began',
+      photos: ['reviews/r3-1.jpg', 'reviews/r3-2.jpg'] },
+    { id: 'heart',   place: 'In your heart', stars: 5, text: 'What?',
+      photos: ['reviews/r4-1.jpg'] },
+  ],
+
+};
+
+/* =========================================================
+   지도 — 외부 프로그램 없이 직접 그리는 지도
+   (지도 그림 서버가 하나 막히면 다음 서버로 자동 전환)
+   ========================================================= */
+const TILE_SOURCES = [
+  (z, x, y, r) => `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/${z}/${x}/${y}${r}.png`,
+  (z, x, y, r) => `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/light_nolabels/${z}/${x}/${y}${r}.png`,
+  (z, x, y)    => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/${z}/${y}/${x}`,
+  (z, x, y)    => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+];
+const TILE = 256;
+const RETINA = (window.devicePixelRatio || 1) > 1 ? '@2x' : '';
+const project = (lat, lng, z) => {
+  const s = TILE * Math.pow(2, z), sin = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180);
+  return { x: (lng + 180) / 360 * s, y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s };
+};
+const unproject = (x, y, z) => {
+  const s = TILE * Math.pow(2, z), n = Math.PI - 2 * Math.PI * y / s;
+  return [180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))), x / s * 360 - 180];
+};
+
+class MiniMap {
+  constructor(el, o) {
+    this.el = el; this.c = o.center.slice(); this.z = o.zoom; this.minZ = o.minZoom; this.maxZ = o.maxZoom;
+    this.tiles = new Map(); this.markers = []; this.handlers = {}; this.loaded = 0; this.failed = 0; this.useTiles = !!o.tiles;
+    el.classList.add('mm');
+    this.tilePane = Object.assign(document.createElement('div'), { className: 'mm-tiles' });
+    this.markerPane = Object.assign(document.createElement('div'), { className: 'mm-markers' });
+    el.append(this.tilePane, this.markerPane);
+    if (this.useTiles) el.append(Object.assign(document.createElement('div'), { className: 'mm-attrib', innerHTML: '&copy; OpenStreetMap &copy; CARTO' }));
+    this.bind();
+    addEventListener('resize', () => this.render());
+    this.render();
+
+  }
+  on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); }
+  fire(ev) { (this.handlers[ev] || []).forEach(f => f()); }
+  getZoom() { return this.z; }
+  // 그려 둔 지도가 화면을 항상 꽉 채우도록 최소 확대 단계를 계산
+  coverZ() {
+    if (!this.bounds) return this.minZ;
+    const b = this.bounds, tl = project(b.n, b.w, 0), br = project(b.s, b.e, 0);
+    return Math.max(Math.log2(this.el.clientWidth / (br.x - tl.x)), Math.log2(this.el.clientHeight / (br.y - tl.y)));
+  }
+  clampZ(z) { return Math.max(this.minZ, this.coverZ(), Math.min(this.maxZ, z)); }
+  setView(c, z) { this.c = c.slice(); this.z = this.clampZ(z); this.render(); this.fire('zoomend'); }
+  flyTo(c, z, opt = {}) {
+    const ms = (opt.duration || .8) * 1000, c0 = this.c.slice(), z0 = this.z, t0 = performance.now();
+    cancelAnimationFrame(this.anim);
+    const step = now => {
+      const t = Math.min(1, (now - t0) / ms), e = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      this.c = [c0[0] + (c[0] - c0[0]) * e, c0[1] + (c[1] - c0[1]) * e];
+      this.z = z0 + (z - z0) * e; this.render();
+      if (t < 1) this.anim = requestAnimationFrame(step); else this.fire('zoomend');
+    };
+    this.anim = requestAnimationFrame(step);
+  }
+  // 사이트 안에 그려 둔 지도(SVG)를 실제 위치에 맞춰 깔기
+  //   fromZ: 이 확대 단계부터 보임 (자세한 지도는 확대했을 때만 보이게)
+  addBase(svg, b, opt = {}) {
+    const el = Object.assign(document.createElement('div'), { className: 'mm-base' + (opt.cls ? ' ' + opt.cls : ''), innerHTML: svg });
+    this.bases = this.bases || [];
+    this.bases.push({ el, b, fromZ: opt.fromZ == null ? -99 : opt.fromZ });
+    this.el.insertBefore(el, this.markerPane);
+    if (opt.limits) this.bounds = b;
+    this.z = this.clampZ(this.z); this.render();
+  }
+  clampCenter() {
+    if (!this.bounds) return;
+    const b = this.bounds, w = this.el.clientWidth, h = this.el.clientHeight;
+    const tl = project(b.n, b.w, this.z), br = project(b.s, b.e, this.z), cp = project(this.c[0], this.c[1], this.z);
+    const minX = tl.x + Math.min(w / 2, (br.x - tl.x) / 2), maxX = br.x - Math.min(w / 2, (br.x - tl.x) / 2);
+    const minY = tl.y + Math.min(h / 2, (br.y - tl.y) / 2), maxY = br.y - Math.min(h / 2, (br.y - tl.y) / 2);
+    const x = Math.max(minX, Math.min(maxX, cp.x)), y = Math.max(minY, Math.min(maxY, cp.y));
+    if (x !== cp.x || y !== cp.y) this.c = unproject(x, y, this.z);
+  }
+  addMarker(ll, html, ax = 0, ay = 0, minZ = -99, maxZ = 99) {
+    const el = Object.assign(document.createElement('div'), { className: 'mm-marker', innerHTML: html });
+    this.markerPane.appendChild(el); this.markers.push({ ll, el, ax, ay, minZ, maxZ }); this.render();
+  }
+  // 화면 위 한 점을 고정한 채로 확대/축소
+  zoomAround(z, px, py) {
+    z = this.clampZ(z);
+    const w = this.el.clientWidth, h = this.el.clientHeight, cp = project(this.c[0], this.c[1], this.z);
+    const ll = unproject(cp.x + px - w / 2, cp.y + py - h / 2, this.z);
+    const np = project(ll[0], ll[1], z);
+    this.z = z; this.c = unproject(np.x - (px - w / 2), np.y - (py - h / 2), z);
+    this.schedule();
+  }
+  panBy(dx, dy) {
+    const cp = project(this.c[0], this.c[1], this.z);
+    this.c = unproject(cp.x - dx, cp.y - dy, this.z); this.schedule();
+  }
+  schedule() { if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.render(); }); }
+  makeTile(z, x, y) {
+    const n2 = Math.pow(2, z), wx = ((x % n2) + n2) % n2, img = new Image();
+    img.className = 'mm-tile'; img.alt = ''; img.draggable = false;
+    let n = 0;
+    img.onload = () => { img.classList.add('ok'); this.loaded++; document.getElementById('mapNote').style.display = 'none'; this.render(); };
+    img.onerror = () => { n++; if (n < TILE_SOURCES.length) img.src = TILE_SOURCES[n](z, wx, y, RETINA); else this.failed++; };
+    img.src = TILE_SOURCES[0](z, wx, y, RETINA);
+    this.tilePane.appendChild(img);
+    const t = { img, z, x, y }; this.tiles.set(`${z}/${x}/${y}`, t); return t;
+  }
+  render() {
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    if (!w || !h) return;
+    if (this.bounds) this.z = this.clampZ(this.z);
+    this.clampCenter();
+    for (const base of (this.bases || [])) {
+      const b = base.b, c0 = project(this.c[0], this.c[1], this.z), tl = project(b.n, b.w, this.z), br = project(b.s, b.e, this.z);
+      const st = base.el.style, op = Math.max(0, Math.min(1, (this.z - base.fromZ) / 0.35 + 0.5));
+      st.opacity = op; st.visibility = op > 0 ? 'visible' : 'hidden';
+      st.transform = `translate(${tl.x - c0.x + w / 2}px,${tl.y - c0.y + h / 2}px)`;
+      st.width = (br.x - tl.x) + 'px'; st.height = (br.y - tl.y) + 'px';
+    }
+    if (!this.useTiles) { this.placeMarkers(w, h); return; }
+    const zi = Math.round(this.clampZ(this.z)), n2 = Math.pow(2, zi);
+    const place = t => {
+      const s = Math.pow(2, this.z - t.z), cp = project(this.c[0], this.c[1], t.z);
+      t.img.style.transform = `translate(${(t.x * TILE - cp.x) * s + w / 2}px,${(t.y * TILE - cp.y) * s + h / 2}px) scale(${s * 1.002})`;
+    };
+    const s = Math.pow(2, this.z - zi), cp = project(this.c[0], this.c[1], zi);
+    const x0 = Math.floor((cp.x - w / 2 / s) / TILE), x1 = Math.floor((cp.x + w / 2 / s) / TILE);
+    const y0 = Math.max(0, Math.floor((cp.y - h / 2 / s) / TILE)), y1 = Math.min(n2 - 1, Math.floor((cp.y + h / 2 / s) / TILE));
+    const need = new Set(); let allReady = true;
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const k = `${zi}/${x}/${y}`; need.add(k);
+      const t = this.tiles.get(k) || this.makeTile(zi, x, y);
+      t.img.style.zIndex = 2; place(t);
+      if (!t.img.classList.contains('ok')) allReady = false;
+    }
+    for (const [k, t] of this.tiles) {
+      if (need.has(k)) continue;
+      // 다른 확대 단계의 그림은 새 그림이 다 뜰 때까지 밑에 깔아 둠 (깜빡임 방지)
+      if (t.z !== zi && !allReady && Math.abs(t.z - zi) <= 2) { t.img.style.zIndex = 1; place(t); continue; }
+      t.img.remove(); this.tiles.delete(k);
+    }
+    this.placeMarkers(w, h);
+  }
+  placeMarkers(w, h) {
+    const cz = project(this.c[0], this.c[1], this.z);
+    for (const m of this.markers) {
+      const show = this.z >= m.minZ && this.z < m.maxZ;
+      m.el.style.display = show ? '' : 'none';
+      if (!show) continue;
+      const p = project(m.ll[0], m.ll[1], this.z);
+      m.el.style.transform = `translate(${Math.round(p.x - cz.x + w / 2 - m.ax)}px,${Math.round(p.y - cz.y + h / 2 - m.ay)}px)`;
+    }
+  }
+  bind() {
+    const el = this.el, pts = new Map(); let last = null, pinch = null, moved = false, zoomTimer;
+    const endZoom = () => { clearTimeout(zoomTimer); zoomTimer = setTimeout(() => this.fire('zoomend'), 150); };
+    const rel = e => { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    el.addEventListener('pointerdown', e => {
+      cancelAnimationFrame(this.anim);
+      pts.set(e.pointerId, rel(e)); if (el.setPointerCapture) el.setPointerCapture(e.pointerId); moved = false;
+      if (pts.size === 1) last = rel(e);
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: this.z };
+      }
+    });
+    el.addEventListener('pointermove', e => {
+      if (!pts.has(e.pointerId)) return;
+      const p = rel(e); pts.set(e.pointerId, p);
+      if (pts.size === 1 && last) { this.panBy(p[0] - last[0], p[1] - last[1]); last = p; moved = true; }
+      else if (pts.size === 2 && pinch) {
+        const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (pinch.mid) this.panBy(mid[0] - pinch.mid[0], mid[1] - pinch.mid[1]);
+        pinch.mid = mid;
+        this.zoomAround(pinch.z + Math.log2(d / pinch.d), mid[0], mid[1]); moved = true;
+      }
+    });
+    const up = e => {
+      pts.delete(e.pointerId);
+      if (pinch && pts.size < 2) { pinch = null; endZoom(); }
+      last = pts.size === 1 ? [...pts.values()][0] : null;
+    };
+    el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    el.addEventListener('wheel', e => {
+      e.preventDefault();
+      const [x, y] = rel(e);
+      this.zoomAround(this.z - e.deltaY * (e.ctrlKey ? 0.01 : 0.0025), x, y); endZoom();
+    }, { passive: false });
+    el.addEventListener('dblclick', e => {
+      const [x, y] = rel(e), z0 = this.z;
+      let k = 0; const tick = () => { k++; this.zoomAround(z0 + k / 10, x, y); if (k < 10) requestAnimationFrame(tick); else endZoom(); };
+      requestAnimationFrame(tick);
+    });
+  }
+}
+
+// 넓은 서울 지도 (경복궁~한강)
+const WIDE_MAP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2052 1522" preserveAspectRatio="none"><rect width="2052" height="1522" fill="#f1f1f0"/><path d="M720,690 C742,682 803,647 850,640 C897,633 967,640 1000,650 C1033,660 1033,682 1050,700 C1067,718 1095,735 1100,760 C1105,785 1093,827 1080,850 C1067,873 1035,878 1020,900 C1005,922 1010,963 990,980 C970,997 932,1003 900,1000 C868,997 823,980 800,960 C777,940 773,907 760,880 C747,853 727,832 720,800 C713,768 720,708 720,690Z" fill="#dfe5dd"/><path d="M560,1130 C583,1127 652,1107 700,1110 C748,1113 817,1127 850,1150 C883,1173 900,1217 900,1250 C900,1283 880,1335 850,1350 C820,1365 762,1348 720,1340 C678,1332 630,1320 600,1300 C570,1280 547,1248 540,1220 C533,1192 557,1145 560,1130Z" fill="#dfe5dd"/><path d="M0,180 C25,183 108,180 150,200 C192,220 225,270 250,300 C275,330 300,355 300,380 C300,405 283,442 250,450 C217,458 142,438 100,430 C58,422 17,442 0,400 C-17,358 0,217 0,180Z" fill="#dfe5dd"/><path d="M560,60 C580,60 658,20 680,60 C702,100 708,260 690,300 C672,340 592,340 570,300 C548,260 562,100 560,60Z" fill="#dfe5dd"/><path d="M760,170 C783,172 875,158 900,180 C925,202 917,270 910,300 C903,330 882,352 860,360 C838,368 797,382 780,350 C763,318 763,200 760,170Z" fill="#dfe5dd"/><path d="M940,210 C950,208 988,180 1000,200 C1012,220 1017,305 1010,330 C1003,355 972,370 960,350 C948,330 943,233 940,210Z" fill="#dfe5dd"/><path d="M1700,860 C1725,863 1822,863 1850,880 C1878,897 1892,948 1870,960 C1848,972 1748,967 1720,950 C1692,933 1703,875 1700,860Z" fill="#dfe5dd"/><path d="M1880,0 C1909,0 2023,-43 2052,0 C2081,43 2069,227 2052,260 C2035,293 1979,243 1950,200 C1921,157 1892,33 1880,0Z" fill="#dfe5dd"/><path d="M0,1120L80,1170L180,1250L300,1330L420,1390L560,1440L760,1470L920,1440L1060,1320L1150,1220L1230,1100L1300,1020L1450,980L1600,990L1750,1060L1900,1150L2052,1180L2052,1330L1950,1300L1850,1240L1700,1150L1550,1130L1400,1170L1300,1250L1200,1360L1100,1450L1020,1522L480,1522L420,1480L300,1400L150,1300L0,1230Z" fill="#dde2e5" stroke="#dde2e5" stroke-width="6" stroke-linejoin="round"/><path d="M1690,330 C1698,347 1725,392 1740,430 C1755,468 1770,515 1780,560 C1790,605 1798,660 1800,700 C1802,740 1785,767 1790,800 C1795,833 1815,867 1830,900 C1845,933 1870,960 1880,1000 C1890,1040 1888,1117 1890,1140" fill="none" stroke="#dde2e5" stroke-width="7" vector-effect="non-scaling-stroke" stroke-linecap="round"/><path d="M620,402 C667,404 803,409 900,415 C997,421 1100,439 1200,440 C1300,441 1417,420 1500,420 C1583,420 1657,432 1700,440 C1743,448 1750,465 1760,470" fill="none" stroke="#dde2e5" stroke-width="2.5" vector-effect="non-scaling-stroke"/><g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round"><path d="M1896,709L1893,752L1892,782L1890,809L1880,872 M1222,603L1241,554L1247,493L1254,472L1278,428 M670,899L673,934L672,958L671,999L685,1064 M521,1154L463,1162L403,1175L335,1175L315,1179 M1868,715L1884,666L1886,633L1899,599L1906,541 M506,154L534,160 M1502,199L1479,134L1476,70L1489,22 M1586,501L1561,496L1530,489 M1968,736L1953,785L1941,814 M1489,241L1465,301L1460,342L1451,362 M489,1072L445,1065L385,1036L362,1025L316,999 M142,626L143,660L163,726 M284,685L245,661L211,625L179,596L147,580 M1228,114L1255,116L1297,116L1319,122 M1513,197L1469,203L1407,196L1386,193L1365,188 M778,19L803,14L842,2 M1111,789L1155,786L1209,782 M1261,1401L1231,1383L1203,1373 M907,1357L877,1354 M1806,585L1763,575L1704,553 M1949,421L1956,454L1962,495L1972,538 M1722,1495L1727,1461L1728,1407 M727,988L770,988L830,979 M1291,680L1268,661L1245,638L1205,595L1188,582 M1598,821L1605,886L1604,953L1604,979 M1804,1213L1735,1217L1673,1210L1607,1217L1575,1222 M180,472L117,474L93,475L46,471L3,479 M1660,97L1713,111L1750,134L1805,169 M1391,670L1393,646L1391,599L1393,543L1404,498 M1149,474L1168,451L1212,398L1236,356L1259,315 M1242,42L1283,65L1309,72L1333,86 M942,1401L940,1357L955,1293L970,1229 M223,639L264,676L282,687 M252,777L207,764L170,754L123,753L93,749 M1310,806L1313,857L1313,886L1324,950L1344,1005 M199,1353L187,1391L166,1454L158,1509 M197,867L174,856L122,831L69,817 M145,162L187,179L214,185L241,197L296,240 M195,94L193,58L187,13 M1233,20L1271,33L1304,54 M1241,144L1300,157L1360,176 M1651,393L1710,410L1766,443 M1426,1168L1416,1196L1414,1230L1390,1290L1383,1355 M613,329L619,306 M245,602L301,592L338,574 M401,572L466,577L508,594L547,623 M156,909L192,925L249,952 M1224,654L1226,614L1227,567L1237,535L1259,487 M1202,963L1207,941L1219,903L1229,848 M1637,340L1632,319L1636,258 M296,1461L292,1483L281,1507 M732,235L692,226 M1673,208L1631,194L1598,182 M1737,418L1733,447L1708,512 M1803,60L1845,59L1870,59L1893,54 M1388,838L1357,835L1303,818L1279,817 M1660,949L1649,980 M2030,495L2023,544L2018,580L2009,620 M1673,705L1739,706L1793,706 M1568,499L1571,555L1569,581L1553,627L1517,683 M1836,378L1800,365L1761,359 M1155,269L1170,210L1172,187L1164,154 M1727,643L1691,635L1666,632 M53,995L90,1013L123,1043L152,1066L176,1095 M1001,1225L1037,1245L1076,1281 M1654,1269L1662,1249L1665,1229L1691,1168 M658,593L616,584L581,584 M1887,1388L1864,1327L1850,1306L1830,1282 M1472,905L1456,942 M1933,838L1868,831L1823,814L1780,805 M102,1442L138,1396L156,1382L215,1354 M506,641L495,667L485,726L471,782 M1059,81L1080,138L1087,171 M199,731L207,682L219,649L242,615L259,597 M428,827L425,791L437,745L435,691 M1532,1194L1590,1220L1632,1232 M233,1175L220,1207L209,1253 M692,597L731,590L764,579 M917,582L943,584L972,580 M75,705L102,698L137,678 M1889,650L1876,710L1870,746 M38,504L13,504 M1693,931L1688,996 M291,1086L288,1137L290,1161 M1183,1061L1150,1055L1110,1041L1080,1030 M1121,97L1052,84L1002,85L942,95L880,115 M381,834L407,847L463,882L491,904 M1514,581L1556,571L1595,564L1623,560 M541,865L485,859L445,855 M210,526L231,465 M1693,179L1726,195L1766,202L1832,205L1882,205 M773,490L747,471L726,446 M1996,724L2041,738 M2051,1112L2003,1102L1952,1093L1926,1095 M1066,198L1045,146L1033,119 M290,1054L298,1096L312,1129 M1594,1182L1604,1246L1619,1306L1638,1345L1648,1408 M415,963L396,1012L361,1061 M562,640L566,680L586,740L611,789 M1478,763L1422,740L1398,730L1343,689 M371,344L369,387L384,451 M1862,11L1802,12L1768,8L1736,8 M1125,284L1090,321L1069,366 M1829,92L1894,100 M1302,1497L1297,1522 M526,1090L522,1121L530,1165L533,1215L524,1263 M369,231L411,249L473,256L499,254 M1313,882L1313,918L1311,953 M1078,403L1073,375L1070,347L1076,286L1077,263 M934,1134L996,1114L1032,1097L1063,1071 M747,513L736,561L722,616L691,674 M1896,270L1919,238L1935,212 M377,836L372,867L367,902L350,969 M1770,311L1774,257L1767,224 M374,399L379,344L375,306L362,240L359,182 M1861,31L1842,17 M1066,84L1067,62L1056,13 M1116,207L1063,214L1034,221 M464,445L442,445L390,444 M1660,1485L1594,1477L1541,1464 M1960,1322L1952,1345L1950,1384L1951,1424 M1020,426L1009,468L1004,521 M191,520L215,477 M47,596L16,583 M1476,1349L1511,1343L1546,1344L1610,1351 M789,520L722,514L671,506L631,502L599,492 M1805,581L1794,528L1783,485 M43,921L12,920 M7,833L67,857L125,872L150,871L209,858 M394,245L335,236L294,233L241,230 M1326,551L1321,577L1322,601L1338,654L1343,696 M1778,1324L1821,1337L1857,1353L1885,1369 M671,508L654,553L631,604 M1705,1219L1713,1272L1725,1299L1733,1348L1759,1411 M1411,638L1401,569L1381,517L1371,498L1359,443 M247,502L275,506L314,521L366,531 M1481,621L1464,672L1447,702L1419,733 M1807,658L1802,692L1800,725 M413,839L477,831L500,824 M415,1320L406,1260L404,1237L402,1185 M96,1305L93,1328L92,1386L104,1430L104,1461 M23,802L11,846 M1280,14L1278,71L1267,103L1251,152 M1341,904L1312,909L1287,917L1258,928L1234,940 M374,33L385,11 M136,897L94,882L38,851 M144,594L98,588L43,575 M1265,524L1291,493L1321,434L1354,387L1377,353 M1717,763L1728,744L1749,703L1756,669L1759,647 M1102,499L1074,490L1026,487L960,473 M1841,169L1830,227L1831,253L1838,285L1851,311 M703,788L682,785L641,768L610,762L570,749 M1799,110L1810,42 M366,508L306,493L278,488 M1850,109L1828,169L1815,196L1808,237 M697,480L642,474L617,469 M957,196L1008,195L1036,203L1087,224 M739,472L738,421L733,360 M1932,527L1927,502L1933,438L1937,415L1942,384 M408,630L405,668L397,717 M549,1007L569,1012L614,1033 M796,424L819,435L859,449L919,450L940,451 M1431,1507L1473,1516L1516,1521 M1377,922L1363,961 M118,1522L137,1480L163,1443 M1058,146L1113,150L1177,161L1245,172L1308,179 M320,565L296,554L260,523 M1593,143L1618,135L1660,116 M1595,376L1594,326L1589,302 M1034,219L1015,285 M470,1213L508,1222 M1115,1161L1139,1160L1163,1166 M1342,1350L1342,1416L1349,1467L1365,1514 M789,987L754,981L726,977 M66,547L70,592L62,631L57,651L46,718 M1227,561L1205,565L1179,565L1142,558L1113,550 M1657,1436L1609,1441L1571,1452L1543,1469 M307,237L239,218L199,217 M284,518L339,536L357,545L392,567L439,617 M154,1189L165,1152L167,1110 M147,176L96,154L62,133L11,117 M1944,236L1886,208L1860,192 M1639,779L1647,716L1641,681L1636,620L1640,581 M1403,689L1409,663L1409,623L1412,578L1413,541 M93,1403L64,1392L41,1388L1,1380 M382,944L361,937L316,920 M1653,149L1643,211L1644,248 M390,256L368,244L316,213L275,167 M227,545L222,598L224,646L232,669 M1629,1436L1602,1491L1597,1517 M1642,248L1575,248L1517,257L1475,267 M1496,1436L1432,1437L1385,1436L1319,1424 M620,4L655,13L677,20L700,22 M1172,1496L1200,1501L1237,1508L1266,1517 M161,741L194,735L225,722L271,714 M318,651L384,672L448,685L474,695L497,711 M224,453L185,443 M1377,126L1308,117L1268,115 M712,23L704,61L700,106 M434,687L420,713L395,756L368,797 M46,473L103,468L124,462L148,459 M1033,672L1072,675L1133,697 M1620,1191L1584,1177L1541,1152 M976,1246L1013,1233L1070,1199 M422,1337L415,1363 M1440,361L1439,335L1421,270L1411,243L1400,223 M375,187L379,154L370,102L377,36 M1736,708L1756,774L1777,828L1789,847 M355,1121L336,1145L306,1178 M31,463L78,473L109,485L137,489L184,499 M1009,1031L1005,1101L1000,1129L992,1159L979,1184 M1410,528L1460,544L1512,557L1552,577L1600,587 M656,973L689,981L711,991 M481,1262L526,1262L572,1275 M1032,521L1004,576L959,628 M1460,1232L1467,1267L1497,1326L1521,1364 M1625,929L1668,883L1683,860L1701,830L1719,803 M1590,398L1578,417L1538,460L1493,506L1442,549 M1009,585L965,576L935,567 M241,233L231,180L230,146L226,122 M111,41L77,28L33,13 M73,1313L119,1315 M891,606L856,601L794,591L766,578 M1620,1395L1664,1392L1715,1397L1781,1404 M1944,892L1951,869L1977,805L1995,781L2033,736 M1918,408L1937,421L1999,449L2024,469 M1022,1194L1011,1224L1007,1264L1009,1313 M786,1131L818,1071L840,1033 M246,463L231,506L209,539L186,563L150,605 M751,665L756,614L765,580 M1805,692L1836,631L1858,597L1884,546L1921,504 M464,1173L443,1169L385,1166L335,1172 M123,887L108,905L77,951L56,983 M526,1037L536,1012L554,981 M1950,418L1918,401L1864,374L1831,345 M1985,1029L2026,1042 M596,658L641,647L676,631L721,598 M1187,782L1159,781 M512,271L562,304L590,322L642,338L695,369 M434,1071L373,1057L354,1047 M1617,428L1567,432L1516,423 M1617,1350L1606,1402L1594,1438L1578,1464 M747,348L766,362L804,391L826,400L856,424 M129,155L156,164L205,186L238,200L269,215 M730,548L725,581L717,615L718,649 M1736,714L1733,774L1738,829 M545,676L552,710L561,769L571,802 M1782,1273L1787,1206 M1191,996L1198,1042L1203,1083 M80,440L35,428 M1122,85L1119,150L1118,181L1122,228L1123,277 M1348,326L1382,338L1430,342L1482,338 M1556,87L1583,91L1604,90L1647,100L1683,103 M1699,281L1720,287L1754,306L1781,325L1804,343 M1987,365L1934,376L1907,386 M1437,1491L1446,1447L1452,1403L1445,1357 M57,1496L31,1488 M1571,860L1576,916L1599,975 M1530,1158L1558,1156L1578,1148 M1799,580L1857,603L1923,611 M392,171L399,198L414,242L422,269L438,311 M973,61L1040,58L1098,69L1133,71 M1364,244L1300,233L1265,231 M1539,1194L1537,1252L1524,1320L1517,1383 M1242,1459L1205,1422L1184,1404 M1602,95L1563,99L1510,94L1488,95L1443,96 M1113,400L1113,343L1117,289L1120,237 M1379,408L1381,351L1371,298L1376,239L1381,209 M333,54L357,3 M120,150L181,155L226,170L264,173L315,162 M471,45L462,91L443,138 M110,821L59,818L38,818L5,814 M1245,1038L1201,1032L1164,1018L1122,1004L1079,994 M820,121L811,161 M606,560L585,621L582,647 M132,1028L141,1077L158,1141 M295,1187L331,1194L394,1215L445,1249L470,1264 M630,636L695,651L729,663 M84,767L44,822L24,848L9,880 M691,640L690,685L691,717 M1737,739L1731,770L1733,803 M1604,188L1556,189L1503,202L1469,206 M92,585L153,609L192,614 M292,971L320,985L354,1001L383,1010 M871,423L875,375 M860,126L910,123L932,120L969,127 M738,1404L763,1404L787,1399L824,1381L888,1355 M1841,1456L1846,1430L1850,1404L1873,1345 M1529,1363L1538,1307L1561,1242 M234,213L218,262 M776,1377L774,1430 M674,996L677,973L688,927L699,880 M438,991L439,1060L429,1117L428,1184L433,1209 M475,1370L540,1366L574,1371 M1103,530L1098,470L1108,403L1126,337 M316,800L294,791L239,752L221,742L185,727 M281,899L277,874L256,819 M1486,1204L1521,1210L1578,1214L1620,1213 M968,1208L911,1175L863,1127 M1682,109L1683,146L1689,168L1700,207L1709,246 M597,26L656,17 M1556,239L1553,289L1558,310L1578,352 M860,612L858,554L867,495L886,433 M1383,703L1425,722L1482,753L1508,758L1553,779 M554,1365L561,1330L561,1310 M1595,419L1651,412L1718,405L1739,403 M694,159L708,100L719,54 M374,585L397,541L441,491 M1701,348L1695,391L1694,444L1705,496L1699,562 M1953,1437L1941,1495 M1984,1479L1983,1420L1983,1387L1977,1334 M1312,223L1293,289L1263,348L1224,397L1205,441 M1502,1272L1547,1276L1569,1278 M1410,1301L1409,1342L1396,1410L1383,1447L1361,1481 M308,673L372,686L396,698L449,729 M275,1225L272,1254L273,1306L258,1374L261,1421 M151,1402L163,1354L175,1328 M751,95L707,72L665,30 M564,1051L603,1052L653,1051L713,1043L779,1023 M1089,344L1154,350L1198,355L1231,359 M134,532L67,514L32,508 M1097,939L1140,948L1171,964L1192,974L1243,1008 M47,145L35,185 M429,1135L408,1123L385,1117L317,1116 M1472,802L1490,816L1540,851 M916,42L896,44L827,58L799,65L743,68 M259,785L197,764L141,749L111,751L43,744 M1807,466L1802,509L1794,560 M500,191L471,186L426,177L401,177L357,168 M1745,329L1739,348L1706,402 M95,1443L89,1474L91,1509 M903,190L912,172L936,132L978,79 M459,303L466,256L473,202 M103,184L121,117L126,95L151,53 M497,717L439,697L371,694L338,702L305,702 M2051,909L2007,914L1944,914L1883,915 M1872,1271L1866,1293L1844,1330 M594,656L562,643L505,603L468,572 M428,130L453,76L466,53L502,3 M1479,209L1503,222L1541,254 M1136,243L1093,218L1044,204L1014,198L960,168 M1213,395L1252,406L1282,410L1302,406 M1657,1326L1650,1374L1631,1421L1617,1477 M1245,441L1242,471L1239,499L1233,520L1223,540 M1583,886L1578,915L1570,980 M388,1347L450,1378L507,1412L552,1432 M507,977L498,1030L499,1055 M1652,449L1708,470L1740,484L1775,490L1841,483 M814,1411L810,1387L799,1355 M1074,262L1080,227L1079,173 M1505,891L1447,886L1413,877L1374,856L1330,837 M300,767L258,765L223,758L161,756 M1573,1511L1582,1458L1585,1396L1589,1333L1590,1311 M455,445L447,380L439,328 M336,541L354,494L358,433 M1158,646L1138,697L1119,738L1102,802L1092,838 M909,318L901,381L890,432L888,499L882,549 M1451,549L1478,513L1510,474L1543,453 M312,296L277,265L242,210 M1619,1410L1684,1431L1737,1443 M972,1250L967,1303L964,1342 M225,1407L235,1363 M385,769L451,762L510,738L540,726L568,716 M516,1131L537,1141 M1574,679L1567,730L1554,775L1528,831L1510,858 M213,195L222,227L223,265 M1411,482L1353,476L1309,471 M302,1114L273,1099L239,1076 M872,1193L905,1195L972,1199L1029,1191L1077,1172 M455,194L523,187L543,188 M1573,103L1587,159L1591,205L1593,255L1602,283 M386,798L397,748L406,705L413,644L409,614 M1772,1361L1767,1413L1760,1464 M1246,653L1250,673L1259,716L1263,739L1292,797 M1198,620L1213,587L1230,550L1246,507 M158,1037L181,1041L245,1059 M1690,1269L1675,1324L1660,1358 M1362,1416L1370,1347L1379,1295 M984,578L1027,595L1046,608 M2041,521L2029,571L2025,619L2022,662L2018,700 M306,385L351,398L386,418L427,447L449,472 M1402,272L1440,265L1473,255L1500,249 M541,269L528,312L518,350L512,377L506,398 M821,547L822,527L818,504L800,440 M1410,236L1421,203L1428,166L1440,121L1441,54 M676,1100L684,1047L683,1025L675,991L659,960 M54,798L40,840L33,894L28,935L27,990 M579,1049L631,1057L692,1074 M935,1289L910,1279 M1926,696L1951,697L1995,694 M596,597L616,606L674,632L735,661 M839,993L809,989L769,981L746,981L691,990 M1582,1474L1584,1453L1589,1419L1609,1366 M1040,1053L1099,1085L1138,1106 M405,1209L459,1239L480,1259L501,1279L537,1303 M548,284L550,307L549,363L562,428L566,454 M1978,1064L1932,1031L1885,1012L1829,1001 M1637,946L1692,961L1713,965L1773,983L1805,984 M1717,1282L1719,1303L1711,1338L1711,1360 M1864,862L1912,884L1964,909L2027,937 M1617,894L1619,958L1619,980 M1145,1102L1130,1156L1097,1209L1070,1268L1054,1287 M1902,1016L1870,1058L1858,1075 M1766,960L1737,952L1688,938 M2032,745L2038,720L2043,672 M1038,573L1018,567L996,553L944,512 M1952,1158L1948,1089L1942,1050L1933,1002 M630,850L633,884L627,918 M1267,957L1328,985L1374,994 M1595,772L1574,831L1561,879L1545,916L1528,963 M239,109L254,81L263,52 M1616,850L1559,871L1522,888L1459,912 M404,698L428,701L472,707L503,713 M639,1070L682,1069L716,1072L740,1079L770,1087 M149,694L140,726L142,775L141,804L150,850 M619,1067L597,1112 M480,363L528,353L591,358L617,368 M1818,760L1819,701L1815,645L1812,616 M233,1093L188,1072L140,1043 M1885,905L1886,870L1883,825L1883,769L1880,750 M1271,603L1271,564L1269,516L1255,457L1236,409 M1419,1408L1385,1381L1346,1327L1332,1311L1307,1268 M1219,1367L1193,1425L1184,1476L1186,1498L1187,1520 M1033,465L1023,487L985,530L954,577L944,600 M531,868L508,863L447,862 M1511,522L1515,499L1539,453L1546,427L1565,388 M1157,1004L1203,1023L1227,1027 M645,631L623,623L561,596L496,584L446,578 M1260,1392L1258,1416L1252,1447 M729,12L743,56L753,114 M241,945L245,969L252,1011L247,1063L247,1100 M429,1123L400,1126L339,1136 M1670,718L1614,709L1571,709L1537,713 M406,877L460,887L485,899L505,902 M15,863L17,842L20,806 M13,533L19,563L19,592L20,618L25,648 M2041,1087L1990,1099L1968,1103L1924,1102L1856,1087 M1257,58L1235,111L1222,128L1197,151L1163,184 M1714,600L1706,656L1692,714L1682,769 M1640,201L1578,182L1515,157L1477,132 M903,1323L950,1332L1005,1356 M1968,541L1989,497L2002,461L2019,435L2042,369 M1629,183L1641,127L1647,103L1645,76 M1199,874L1169,922L1157,943L1146,986 M1850,567L1835,612L1807,673 M100,1047L110,1008L112,985 M1629,480L1595,476L1570,473L1515,470L1458,472 M1278,156L1227,157L1205,157L1143,165 M427,945L415,965L372,1013 M1741,409L1743,342L1740,290L1736,266 M474,962L454,960L429,959L363,959L304,970 M602,1112L623,1110L691,1108L746,1116 M256,818L198,794L138,777L99,755 M1227,299L1232,277L1255,221L1260,179L1253,123 M1101,47L1165,63L1191,77L1211,82L1256,110 M1899,1285L1833,1273L1769,1250L1716,1223L1680,1203 M1908,870L1970,880L2011,898 M1439,1324L1478,1339L1498,1345 M623,331L613,351L574,396L538,427L515,461 M1106,725L1133,729L1186,746L1211,761 M1553,250L1538,299L1530,364L1507,421 M248,1067L279,1024L304,963L327,918 M1703,88L1669,75L1629,70 M1722,751L1700,760L1675,772 M967,172L1016,197L1053,213 M1320,145L1340,102L1356,65L1388,12 M397,210L346,210L305,199L277,194 M1514,857L1494,893L1474,948 M759,390L774,323 M260,566L302,574L369,588 M340,272L352,228L353,208L366,163 M259,1120L210,1112L156,1105 M11,1L46,5L98,14L165,22 M1137,409L1121,453L1089,507L1062,550 M909,1268L891,1299L867,1328L824,1365L776,1407 M1142,384L1154,339L1158,304L1152,262L1130,208 M1092,1105L1113,1063L1125,1038 M1564,567L1602,576L1655,580 M1546,1402L1577,1404L1627,1403L1656,1404L1703,1407 M1050,939L1067,899L1071,873 M594,748L595,720L593,668 M704,200L715,170L725,147 M135,809L84,799L23,787 M725,273L725,230L725,201 M1184,873L1231,895L1263,918 M1869,264L1820,251L1779,250 M1113,1111L1162,1132 M1784,102L1809,46 M848,1078L906,1100L934,1115L953,1126 M621,769L633,729L643,677 M407,362L370,336L308,306L277,290 M14,966L63,972L133,972L153,967 M493,1123L521,1122L570,1120L629,1111 M1850,962L1857,1028L1866,1064L1868,1097 M1330,205L1353,219L1413,244 M585,1102L538,1083L503,1058L456,1024 M619,457L639,456L665,453L725,434 M554,677L516,674L464,683L401,701 M557,837L524,825L502,824 M1811,1048L1766,1041L1719,1039 M1129,130L1097,169L1077,211L1054,258 M1648,932L1646,908L1659,853L1672,827L1704,785 M1474,1154L1448,1185L1402,1234 M885,1350L898,1395L919,1429 M1474,4L1415,0L1390,3 M1500,188L1508,149L1514,97L1516,37 M1701,1256L1703,1299L1713,1364 M1255,92L1234,147L1223,173L1214,215L1203,239 M1539,842L1504,821L1473,805L1449,800L1419,803 M871,577L891,591L926,607L973,624 M1507,1304L1493,1344L1481,1389L1462,1442L1439,1473 M972,1140L1032,1159L1084,1183 M1030,1172L1041,1127L1047,1100 M863,1354L889,1357L931,1354L958,1360 M1887,970L1877,1013L1865,1055 M127,547L100,536L40,515 M676,560L673,588L679,626L695,676 M1822,275L1802,222L1774,168L1760,150 M2007,944L1998,963L1989,988L1978,1021L1949,1081 M520,287L475,255L441,224L405,179L362,145 M1156,592L1112,578L1058,546L1004,526L965,500 M1678,1500L1713,1496L1734,1490L1781,1473 M307,63L256,66L233,63L202,64 M1128,1146L1133,1209 M1874,30L1876,52L1881,81L1885,112L1879,167 M1038,92L1064,85L1095,69 M1745,547L1744,518L1742,496 M1905,863L1861,854L1812,837L1759,799 M1401,1217L1403,1279L1401,1300L1402,1327 M1890,289L1853,278L1803,256L1777,241 M341,372L336,306L347,247L355,218 M1243,646L1243,624L1251,590 M1612,901L1563,905L1536,906L1502,903L1473,907 M143,1305L138,1330L138,1351L127,1413 M82,858L81,879L71,940 M1816,21L1756,27L1719,42 M1539,200L1567,141L1592,88 M1092,11L1039,16L1001,28L966,31 M531,744L536,765L564,822 M1074,25L1127,59L1190,86L1215,100 M230,664L255,666L290,679 M338,634L379,635L435,624 M1985,397L1983,439L1983,482 M1580,352L1525,322L1479,311L1422,287 M36,438L5,430 M553,685L583,690L651,686L704,689 M61,1374L3,1357 M1277,227L1277,171L1281,143L1288,88L1295,64 M1768,505L1737,567L1730,589 M2034,1495L2026,1521 M1609,334L1608,313L1600,255 M310,520L319,478L326,414 M417,748L432,694L439,665L459,607 M1268,345L1288,303L1315,263 M1840,357L1802,362L1740,360 M378,1003L412,1007L474,1015L526,1009L555,1005 M479,32L482,72L491,136L493,156 M1753,1409L1766,1385L1785,1347 M310,363L308,411L314,443 M142,1386L149,1361L158,1342 M1440,102L1411,95L1371,74L1331,49 M881,1069L836,1074L792,1081L733,1092L681,1096 M1157,212L1183,209L1248,204L1311,208 M142,168L84,140L44,126 M779,94L815,104L872,104 M217,1433L199,1467L172,1498 M754,483L805,498L869,511L927,519L962,531 M1029,82L1027,112L1029,177L1018,243 M31,1319L35,1299 M1413,547L1402,610L1402,656L1407,683 M624,718L623,692L615,644 M415,1268L446,1262L505,1251 M1157,998L1136,980L1102,937 M1137,497L1196,500L1243,509L1292,505 M943,309L944,279 M627,601L636,580L666,543L693,514L705,497 M1331,502L1340,480L1382,427L1400,401L1430,378 M837,133L834,85L827,18 M36,687L31,720L25,773 M502,1255L519,1304L524,1352L522,1376 M1983,970L1956,973L1926,977L1897,984 M705,1010L751,1036L768,1050L792,1066L848,1100 M488,193L491,149L500,104L505,37 M616,381L628,318 M1479,255L1518,243L1556,235L1616,216L1655,208 M1959,1055L2010,1068 M1664,1442L1620,1430L1591,1412L1567,1403 M1746,41L1740,72L1733,92L1729,116L1721,140 M446,844L482,855L511,860L574,854 M1023,45L1062,37L1116,24L1165,15L1221,19 M1152,1057L1212,1055L1234,1054 M1629,183L1633,163L1653,112L1669,82 M751,428L814,421L852,427L917,451L978,461 M1796,1252L1760,1301L1735,1361 M348,1226L318,1278L299,1313 M1289,528L1274,576L1261,605 M1240,871L1194,851L1159,825 M1965,811L1919,788L1868,778L1820,769 M1198,1384L1173,1386 M234,988L207,976L179,969L129,942L88,907 M901,1432L857,1416L810,1401L775,1383L737,1347 M226,766L228,737L250,677 M694,915L700,863L702,798L703,754L704,684 M1884,1474L1917,1495L1947,1510 M1378,1280L1360,1315L1326,1352L1289,1375 M1307,1013L1317,983L1340,930L1360,880 M1048,1301L1025,1302L981,1303L914,1308 M1163,287L1137,272L1075,243 M1472,316L1413,308L1382,295L1355,276 M499,286L523,295L590,310 M246,1169L234,1112L209,1055L186,1017 M1164,382L1140,373L1101,358 M1354,389L1344,445L1334,487L1318,516 M758,881L722,878L695,878L633,895L604,902 M1237,234L1291,228L1347,212 M108,902L103,955L89,1019L62,1079L43,1125 M1088,486L1090,523L1099,573L1120,618L1160,668 M1792,1306L1791,1330L1798,1388L1813,1428L1826,1480 M123,933L117,997L124,1035L137,1089 M1923,823L1903,819L1860,811L1811,814L1792,811 M872,1101L845,1107L786,1121 M1060,602L993,582L950,581L889,594 M1701,365L1692,400L1669,458L1660,515 M1108,1167L1061,1182L1009,1196L965,1201 M375,572L356,633L343,673 M944,120L907,112L844,97 M1881,1486L1913,1496 M1372,184L1367,204L1360,237L1362,257 M1106,805L1098,864L1090,910L1080,943 M557,542L569,485L565,446L569,418 M1358,654L1337,681L1322,708L1298,746L1274,787 M1600,383L1599,350L1592,307 M479,1265L487,1208L482,1174L457,1120 M1031,546L966,552L903,555L864,565 M528,16L556,32L596,57 M1132,518L1165,478L1178,453 M793,988L778,922 M1985,915L1938,923L1901,918L1872,920 M1374,767L1336,759L1273,737L1220,712 M518,925L547,944L595,976L619,989L635,1006 M945,1275L950,1302L957,1356 M1553,136L1560,202L1571,235L1577,295L1586,344 M1431,328L1421,395L1408,439 M626,1328L625,1385L632,1418 M729,971L665,946L624,940L566,932 M1281,903L1227,882L1172,870L1117,868 M1165,287L1129,283L1099,278L1071,266L1023,248 M711,607L703,637L696,666L689,724 M1446,532L1446,576L1455,610 M1037,1140L987,1132L949,1131 M195,719L145,727L91,731 M2003,1443L2044,1435 M1845,473L1807,476L1744,501 M1253,507L1263,479L1273,413L1290,358 M1797,611L1800,582L1810,534L1823,511L1831,486 M1036,197L1059,154L1083,113 M1130,212L1113,247L1098,277L1066,313L1031,341 M1265,819L1306,810L1368,807L1405,810L1466,829 M1260,267L1270,324L1276,360 M1542,965L1547,921L1552,860 M1565,1172L1548,1224L1517,1283L1475,1329 M1408,1459L1417,1393L1420,1353L1413,1304L1393,1254 M570,476L592,483L638,510L680,537L715,561 M2005,1382L1987,1441L1979,1487 M228,261L265,285L295,310L315,338 M1630,366L1643,415L1647,435L1645,486L1646,507 M246,1392L243,1446L240,1490L246,1520 M323,773L321,808L312,860 M1527,679L1502,684L1480,688L1429,711 M1440,245L1392,228L1352,204 M1229,1429L1189,1421 M2016,1035L1965,1013L1900,1001L1852,978 M170,210L235,225L262,223L287,227 M663,867L618,842L597,832L552,799L507,774 M1207,909L1223,868L1232,823L1229,757L1238,717 M1174,594L1168,651L1150,698 M756,433L818,435L869,429 M1398,1198L1407,1246L1407,1297L1425,1360 M1561,876L1567,847L1573,825L1580,764 M399,658L367,661L327,656L272,663L247,673 M1501,1261L1435,1260L1384,1256L1322,1232 M1363,743L1404,743L1448,737 M409,1140L377,1136L333,1137 M1874,470L1897,480L1917,495 M648,545L670,554L715,564L764,583L784,596 M1796,1215L1759,1197L1706,1186L1653,1163L1615,1143 M1788,645L1790,583L1792,553 M713,452L783,450L813,446L859,426L886,416 M1321,918L1308,958L1295,999L1282,1019 M491,592L434,568L409,562 M693,4L753,20L785,39L805,49 M1406,1513L1433,1463L1459,1432L1504,1401L1528,1388 M1249,362L1286,369L1326,377L1350,383L1373,391 M74,737L132,771L169,792L225,807 M355,697L316,692L258,692L229,700L176,703 M1251,179L1214,161L1191,154 M537,1214L512,1275L479,1337L464,1368 M1091,642L1051,630L1026,625 M575,337L634,350L676,367L724,376 M1305,83L1332,36L1350,12 M1901,329L1910,299L1927,266L1946,241 M1304,372L1282,365L1256,351L1221,318 M1108,68L1040,53L981,56L934,62L909,64 M1269,1497L1315,1498L1342,1493L1388,1479 M256,722L234,718L186,720 M1437,781L1454,754L1466,714L1469,666 M1817,1344L1784,1335L1760,1334L1699,1338L1662,1347 M1438,291L1473,289L1523,278L1559,274 M294,497L323,508L351,526 M429,592L441,530L444,499L456,444L453,398 M1211,267L1242,293L1293,340 M607,1394L618,1364L624,1318 M281,1100L291,1060L316,1010L323,983L324,939 M1631,519L1597,520L1565,527 M578,1102L601,1114 M389,1178L380,1151L355,1107L340,1046L314,998 M855,107L795,104L772,110 M703,147L687,203 M1527,895L1487,870L1438,822L1398,778 M1460,1326L1459,1293L1466,1267 M390,1140L452,1152L475,1164L496,1179L523,1215 M1416,357L1389,393L1352,431L1325,480 M1818,393L1799,454L1773,511L1765,556 M1467,1449L1491,1455L1537,1474L1557,1480L1575,1492 M2027,1084L2030,1123L2036,1143 M1032,1105L1044,1044L1054,1006L1069,953L1072,932 M1265,413L1317,429L1357,433L1416,426 M1321,44L1299,35L1278,26L1251,21 M1297,935L1286,999 M458,229L426,212L396,188 M1105,192L1101,239L1091,289L1081,310 M12,442L12,476L8,506 M248,709L267,657L286,594 M1865,1358L1813,1324L1772,1296L1728,1272L1689,1247 M1740,450L1732,471L1709,510L1672,543L1618,569 M1810,501L1809,558L1804,618L1816,678L1815,740 M480,1278L419,1284L389,1285 M490,579L504,546L507,523 M1055,912L1030,912 M1893,1380L1890,1424L1880,1457 M281,1L246,5L212,8L165,3 M1498,1400L1462,1386L1436,1369 M1740,1293L1742,1264L1732,1219L1721,1186 M1691,756L1742,764L1772,760L1797,760L1864,746 M71,70L66,100L61,125L56,152L47,171 M1263,514L1241,553L1231,573 M957,1279L966,1325L975,1345 M544,1072L588,1076L657,1075L698,1086L744,1091 M1706,473L1760,491L1795,510L1830,523 M448,764L463,743L511,698 M1718,766L1705,833L1697,868L1676,931 M1582,49L1524,34L1499,22L1483,9 M1733,1505L1744,1488L1754,1452L1769,1404L1800,1343 M962,1187L1026,1210L1057,1218L1109,1226 M1273,1336L1304,1347L1358,1371 M79,474L125,497L189,513 M1481,61L1440,62L1382,48L1336,32 M1732,165L1747,109L1753,83L1765,34 M111,622L47,631L1,638 M386,1107L423,1118L460,1125L524,1120L582,1119 M556,434L579,438L624,435L676,434 M1572,520L1504,533L1450,534L1419,543L1375,556 M1462,373L1422,421L1391,456L1357,485L1340,497 M1754,164L1741,196L1733,247L1731,274L1720,315 M1935,841L2001,853L2043,854 M1326,322L1372,317L1432,299L1484,298 M53,748L40,778L19,803L3,829 M354,509L298,482L275,468L214,451 M895,76L889,96L877,125 M713,1365L738,1376L778,1395 M116,158L130,118L153,84 M606,749L588,731L555,701 M339,624L301,619L249,627L180,622L159,622 M1507,62L1575,67L1630,81L1650,86 M162,1020L195,1049L236,1104L273,1146L307,1181 M1523,1485L1521,1441L1518,1404L1520,1378L1522,1341 M728,213L732,278L743,340 M892,62L909,36L929,12 M419,589L414,531L403,496 M1088,999L1098,946L1106,927L1114,877 M1202,1091L1179,1086L1139,1083L1096,1082L1068,1087 M913,385L906,430L898,482L895,506L898,530 M1762,1380L1827,1387L1856,1395L1917,1402L1961,1408 M1013,336L1025,315L1044,296L1077,269 M555,1381L533,1417 M315,645L352,639L392,633L439,626 M1658,377L1689,317L1724,277L1767,224L1804,173 M945,387L902,386L844,401 M1589,33L1589,54L1579,90L1571,110L1557,138 M702,1365L709,1394L718,1429 M1559,359L1568,403L1580,444 M1612,1204L1638,1220L1683,1264L1735,1291L1790,1317 M1801,68L1794,31 M1003,1084L1068,1073L1090,1072 M309,1320L303,1277L293,1249L292,1221 M43,21L51,74L64,121 M940,1304L933,1370L932,1400 M584,583L614,525L629,485L633,427L641,406 M1169,118L1101,123L1057,138L1025,152L990,160 M243,1038L197,1013L144,983L91,959L28,938 M1929,897L1962,895L1988,892L2021,884 M320,954L305,974L256,1018 M1911,468L1945,482L1996,489L2046,490 M312,1026L276,1009L243,995L185,986 M1616,843L1632,790L1637,737 M780,25L743,22L688,29 M566,748L592,753L644,751 M1680,627L1689,693L1685,735 M341,1349L363,1299L375,1259L402,1218L418,1200 M1693,840L1728,850L1772,851 M1095,449L1038,417L995,387L964,357 M1614,504L1553,489L1531,485L1477,464 M662,468L631,512L612,551L595,572 M182,1415L175,1457L172,1521 M1570,459L1551,501L1539,532L1535,563 M155,541L117,517L93,493 M270,475L318,474L375,469L421,477 M1027,166L963,173L939,177L903,176 M1894,892L1921,893L1970,909L2017,917L2040,924 M726,476L730,440L745,381 M1662,1204L1660,1237L1650,1304 M1263,1414L1263,1457L1261,1479L1259,1500 M1045,658L1031,675 M2024,1355L2000,1350L1943,1335 M1904,1274L1920,1324L1941,1362L1950,1404 M368,885L350,930L339,969 M1086,135L1099,109L1125,69L1146,23 M1290,466L1284,500L1269,561 M201,1359L197,1333 M1703,244L1709,215L1713,183L1714,116 M683,1001L700,1066L710,1100 M1473,752L1527,755L1569,756 M361,420L327,406L296,387 M1712,707L1743,722L1792,769 M1558,1428L1582,1378L1601,1342 M1988,359L2011,357L2049,355 M514,274L447,261L407,264L339,260 M55,707L44,754L39,810L34,839 M1963,1461L1977,1420L1982,1394 M569,842L579,785L606,723L609,699 M1699,988L1705,958 M620,32L655,57 M215,1479L259,1493L283,1508 M954,1187L977,1187L1034,1169L1082,1139 M91,1015L92,960L98,896L93,869L82,846 M1598,409L1555,387L1530,381L1496,370 M1277,293L1335,302L1364,308L1426,333 M1876,1361L1871,1402L1866,1429L1864,1477 M1447,811L1437,859L1426,927L1424,958 M150,108L169,124L189,155L210,183 M540,1077L603,1075L664,1080 M1728,517L1669,509L1622,512L1566,529L1497,533 M746,1387L739,1367 M1512,305L1532,307L1599,309L1632,303 M903,371L885,407L877,448L870,469L853,512 M1966,452L1961,516L1963,573 M939,321L910,309 M1129,464L1139,447L1150,429L1190,381 M935,505L940,473L949,448L967,401 M186,1250L245,1263L273,1263 M1338,675L1308,713L1273,743L1238,762L1211,779 M466,574L471,534L482,478 M1993,1403L2017,1400L2051,1390 M982,416L966,444L951,470 M374,343L326,351L298,352 M553,1118L492,1087L427,1073L365,1056 M1132,1426L1121,1480 M294,1054L249,1059L184,1080L144,1091L80,1089 M477,306L461,373L453,415L442,466 M2049,1407L1999,1404L1954,1408 M962,61L994,56L1042,61 M1915,757L1977,767L2022,787 M742,1428L743,1402 M408,990L421,966L430,936L432,907 M1623,663L1686,688L1738,716L1802,744 M1382,828L1421,834L1473,850 M1547,369L1555,348L1559,318 M1126,211L1125,185L1116,135L1104,89L1086,28 M457,1207L450,1141L442,1104 M1786,296L1852,279L1893,265L1951,256L2010,258 M1149,457L1142,397L1126,349L1121,324L1123,283 M674,14L699,33L727,59 M583,445L625,453L681,457L703,456 M1344,820L1339,874L1330,921L1320,987 M450,761L459,728L478,690L487,652 M1217,262L1245,232L1288,195L1306,180L1333,147 M991,579L964,577L898,570 M866,555L881,529L890,501 M1292,274L1241,283L1198,301L1178,307L1148,311 M220,1370L235,1426L233,1474 M420,513L432,452L433,387 M1962,889L1949,920L1930,976L1922,1002 M240,834L301,835L342,845L368,848L400,856 M791,51L772,41L714,21 M510,379L492,364L457,331 M1474,910L1475,958 M1964,865L1909,880L1863,909 M804,1354L778,1355L749,1353L696,1340L651,1326 M1857,633L1914,634L1961,632L1988,631 M346,906L359,876L371,857L388,828 M1706,1220L1699,1252L1700,1301 M2038,1410L2036,1379L2012,1319 M1875,878L1907,885L1973,882L2009,890L2052,902 M1015,980L992,975 M1156,1135L1157,1089L1166,1051L1167,1010L1159,971 M631,392L629,413L621,473L616,541L624,604 M1116,783L1135,718L1145,652L1161,618 M138,444L160,443 M239,1026L224,1087L193,1146 M1798,410L1854,429L1899,452 M1605,1184L1661,1192L1697,1205L1758,1217 M1579,1139L1579,1180L1589,1216L1599,1254 M1650,626L1655,686L1659,741 M993,427L1049,417L1119,420 M1822,182L1875,197L1904,213 M293,864L256,858L200,832L166,802 M1298,112L1298,81L1284,25 M1584,631L1560,673L1527,727 M494,266L505,307L527,356L540,372 M328,672L327,641L332,602L328,534L331,467 M289,1201L256,1189L214,1186L152,1192 M1663,192L1658,222L1656,263 M1172,187L1160,223L1142,287L1106,343 M526,468L521,516L509,553 M2021,545L1969,532L1930,509 M914,419L960,443L982,457 M670,1449L687,1406L695,1374 M213,1508L234,1462L269,1415 M24,560L50,497L66,453 M1785,1383L1786,1337L1798,1278L1799,1240 M1543,805L1517,797L1470,795L1423,803L1356,800 M487,994L501,944L529,897 M246,109L241,146L245,205 M260,1459L304,1472L347,1493 M1596,156L1605,127L1628,92 M1941,1088L1901,1065L1854,1025 M810,977L771,967L731,946L688,916 M1006,528L1004,573L1009,628 M1619,4L1599,47L1561,99L1539,140L1513,196 M651,514L596,511L571,503L516,494L487,490 M1387,1252L1409,1209L1423,1177 M517,1147L528,1109L550,1054L567,1018L585,984 M1747,650L1694,633L1628,616L1589,606L1546,593 M38,832L104,821L147,822 M624,1012L629,961L620,911 M1777,762L1758,816 M1118,597L1175,600L1230,605L1282,620L1302,623 M538,591L559,600L578,609L626,616 M1890,1303L1898,1350L1911,1412L1925,1462L1931,1494 M1528,503L1502,490L1451,448 M1995,1470L2027,1428L2047,1377L2050,1336 M234,699L214,743L205,767L184,812L162,841 M509,1158L538,1102L546,1069 M1771,801L1824,822L1861,832L1913,858L1935,871 M1002,1264L1014,1304L1021,1324 M414,488L399,424L393,366L389,305L388,262 M394,1331L415,1337L457,1353L516,1358 M550,1300L530,1292L498,1273 M1539,847L1485,847L1417,849L1361,864L1313,878 M1151,1065L1192,1012L1212,993 M2044,1027L2032,1078L2018,1128L2010,1152 M1735,1300L1683,1296L1647,1300 M1967,351L1966,299L1959,266L1951,216 M606,350L631,341L677,330 M1420,155L1392,147L1358,129 M1219,278L1222,231L1236,188L1242,120 M1663,900L1685,903 M1417,307L1419,274L1424,228 M1064,287L1126,308L1156,314L1208,340L1226,354 M807,1132L763,1123 M1574,822L1571,875L1556,931L1553,967 M68,893L46,925L18,960 M402,724L398,792L408,845 M1169,146L1166,195L1158,240L1137,286L1093,339 M186,1481L183,1425L187,1387L183,1360 M1399,1346L1424,1357L1478,1392 M1149,531L1146,569L1139,627L1129,663L1115,707 M1471,265L1503,281L1538,303 M299,1197L283,1257L273,1278 M1522,927L1523,889L1511,844L1511,822L1508,755 M642,474L709,480L753,475L802,467 M914,1027L972,1061L1025,1080L1086,1107 M1214,334L1159,299L1120,259L1077,228 M1492,329L1427,338L1363,334L1303,319 M1643,1218L1653,1180 M1356,436L1364,417L1371,392L1387,342L1396,308 M1995,314L1958,293L1911,258 M1712,1520L1661,1495L1602,1459L1550,1431L1499,1409 M1788,73L1778,132L1764,180 M1473,616L1455,644L1434,709L1432,769 M272,951L282,922L291,892 M1880,235L1845,241L1823,241L1774,241 M426,1104L457,1048L473,1004L476,966 M1559,561L1546,583L1532,613L1499,650L1483,673 M1222,68L1179,73L1139,77L1094,81L1060,83 M1514,731L1522,699L1535,650L1538,594 M1045,106L1069,58L1080,40L1098,20 M223,1197L213,1237 M182,1058L175,1002L183,935 M1852,425L1887,421L1907,417 M1569,534L1507,539L1465,542L1443,539L1400,536 M761,237L765,262L767,320 M295,147L265,193L242,243L232,279 M359,1176L309,1171L280,1164L218,1145L178,1141 M528,515L525,580L535,643L539,665 M1666,1377L1663,1321L1658,1258L1644,1219L1629,1197 M1,1517L41,1518 M1671,1397L1666,1422L1648,1480L1640,1510 M1281,201L1336,209L1379,210L1404,205L1455,190 M1361,1353L1405,1367L1443,1388 M653,969L658,912L666,886L680,848L691,830 M711,1065L734,1074L775,1096L826,1140 M1437,249L1456,184L1460,162L1483,102 M485,1330L463,1325L399,1315L363,1304L314,1295 M812,609L814,649 M1851,716L1894,745L1916,760 M67,153L77,113L86,87 M1705,458L1733,458L1784,464 M440,575L445,547L448,488L447,438 M173,532L233,534L272,544L316,567 M88,902L81,936L73,976L62,1030L50,1094 M352,591L327,588L300,576L282,562L241,531 M1515,81L1537,85L1589,83L1624,78 M1117,1014L1114,986L1114,948 M242,1053L203,1054L139,1037 M1846,75L1900,67 M1354,440L1316,491L1284,544 M1973,774L2007,719L2026,682 M286,200L287,225L288,278 M1396,702L1411,666L1416,642L1446,588 M937,146L915,142L886,142L848,138L797,135 M488,377L488,326L493,257L488,193 M646,666L616,664L565,645 M1652,635L1697,658L1751,695 M1201,256L1157,261L1093,275L1069,280L1032,283 M94,624L117,585L134,551 M91,872L69,910L46,947L28,995L15,1020 M1199,602L1162,592L1095,575L1029,565 M1043,1290L1030,1229L1030,1199 M1428,434L1450,448L1488,474L1516,487 M425,286L421,343L404,403 M749,61L701,32 M1439,1211L1463,1216L1524,1218 M1382,1500L1412,1505 M965,632L1012,629L1044,633L1067,641 M972,389L1031,405L1084,435L1130,472L1165,491 M1953,1034L1957,1006L1973,960L1987,892L1985,837 M1264,621L1270,560L1277,526L1287,500 M1603,305L1623,256L1637,235L1648,197 M893,1099L873,1085L824,1068L795,1065 M1435,148L1432,169L1425,219L1414,265 M1643,571L1653,634L1666,665L1693,703 M1185,572L1230,564L1266,555 M378,695L389,670L398,645 M1823,647L1814,685L1811,715L1806,743L1807,773 M1405,1448L1401,1513 M1858,890L1871,833L1902,773L1923,747 M1873,75L1853,137L1825,198L1796,238L1746,285 M1126,1050L1126,1076L1122,1134L1126,1194L1120,1230 M1687,494L1684,518L1682,544 M1015,1199L1021,1224L1030,1272L1041,1324 M881,1422L885,1393L877,1345 M301,971L265,949L210,912L179,885 M1470,960L1430,956L1407,958L1348,983 M476,323L534,334L590,329L614,330L664,342 M1584,649L1616,588L1645,554 M1721,160L1744,122L1779,71L1809,15 M204,924L206,961L199,998 M77,182L128,186L194,178L231,183L276,186 M1173,1453L1174,1384 M836,113L806,106L781,101L728,105 M899,1036L921,1042L953,1059L987,1071L1008,1079 M1355,448L1351,404L1334,347L1316,299L1311,274 M1627,256L1573,260L1509,286L1463,294 M232,972L211,968L163,963L135,966L96,973 M714,374L712,320L707,300L701,280 M1148,1113L1130,1050L1115,1021 M824,1432L773,1387L756,1369 M1399,617L1428,613L1495,622 M757,1066L755,1025L768,974 M738,842L722,899L721,931L725,971 M1766,652L1705,654L1655,647 M1476,1348L1487,1331L1512,1298L1561,1248 M806,511L782,506L746,501 M1650,237L1645,286L1641,316 M470,264L401,267L341,288L276,300 M18,817L21,866L12,912L4,979 M625,345L572,346L524,335L500,328L449,319 M1085,1197L1088,1149L1096,1089 M270,1269L260,1302 M406,855L355,821L306,793L245,770 M1780,1346L1739,1333L1691,1318L1668,1309L1647,1304 M1575,380L1640,386L1705,384L1733,387L1789,388 M822,567L820,498L825,445L836,391 M1216,775L1243,784L1284,802 M1891,762L1870,759L1848,754L1792,747L1725,754 M20,866L14,829L12,798 M577,1385L528,1346L489,1317L445,1263L420,1209 M1243,1056L1238,1086 M1593,1438L1604,1415L1621,1393 M1321,1484L1342,1421L1350,1376L1352,1356L1376,1300 M841,142L896,156L947,176 M1447,905L1396,889L1354,873L1313,865 M526,1006L582,1028L612,1052 M692,375L721,377L752,371L782,367 M491,338L542,372L587,387 M129,442L149,437 M210,1097L182,1082L147,1072L82,1056L29,1026 M1337,792L1334,760L1344,715L1345,690L1347,663 M521,801L560,801L611,810 M1620,747L1638,803L1646,855L1650,922 M700,106L720,67L730,35 M89,1522L45,1506L22,1502 M1668,932L1677,865L1675,814L1681,783L1687,729 M1522,196L1586,205L1654,202L1683,196 M1066,271L1057,322L1048,342L1038,360L1025,405 M654,26L624,24L585,15L518,15 M400,635L414,591L417,534 M1214,1446L1244,1445L1274,1441L1337,1428 M327,257L379,256L416,254L453,251 M70,977L10,971 M1863,801L1815,805L1792,807L1728,827L1686,840 M1792,1245L1737,1226L1691,1224 M1729,1240L1670,1214L1640,1205L1618,1195 M1220,619L1262,614L1293,601L1323,597 M409,808L361,792L301,777L265,775L209,788 M422,85L354,88L303,105L246,140L206,160 M1863,255L1857,228L1829,165L1819,121L1821,90 M1385,817L1362,862L1332,893L1315,921L1287,981 M346,865L339,799L329,750L319,723 M1953,1112L1994,1131L2016,1137 M700,394L744,407L788,420L855,434 M1672,1306L1718,1316L1762,1326L1796,1340L1819,1347 M1377,595L1339,573L1297,560L1269,553L1248,551 M1314,784L1316,762L1316,741L1318,690 M93,960L119,960L145,963L179,972L215,993" stroke="#e0e0e0" stroke-width="2.6" vector-effect="non-scaling-stroke"/><path d="M1896,709L1893,752L1892,782L1890,809L1880,872 M1222,603L1241,554L1247,493L1254,472L1278,428 M670,899L673,934L672,958L671,999L685,1064 M521,1154L463,1162L403,1175L335,1175L315,1179 M1868,715L1884,666L1886,633L1899,599L1906,541 M506,154L534,160 M1502,199L1479,134L1476,70L1489,22 M1586,501L1561,496L1530,489 M1968,736L1953,785L1941,814 M1489,241L1465,301L1460,342L1451,362 M489,1072L445,1065L385,1036L362,1025L316,999 M142,626L143,660L163,726 M284,685L245,661L211,625L179,596L147,580 M1228,114L1255,116L1297,116L1319,122 M1513,197L1469,203L1407,196L1386,193L1365,188 M778,19L803,14L842,2 M1111,789L1155,786L1209,782 M1261,1401L1231,1383L1203,1373 M907,1357L877,1354 M1806,585L1763,575L1704,553 M1949,421L1956,454L1962,495L1972,538 M1722,1495L1727,1461L1728,1407 M727,988L770,988L830,979 M1291,680L1268,661L1245,638L1205,595L1188,582 M1598,821L1605,886L1604,953L1604,979 M1804,1213L1735,1217L1673,1210L1607,1217L1575,1222 M180,472L117,474L93,475L46,471L3,479 M1660,97L1713,111L1750,134L1805,169 M1391,670L1393,646L1391,599L1393,543L1404,498 M1149,474L1168,451L1212,398L1236,356L1259,315 M1242,42L1283,65L1309,72L1333,86 M942,1401L940,1357L955,1293L970,1229 M223,639L264,676L282,687 M252,777L207,764L170,754L123,753L93,749 M1310,806L1313,857L1313,886L1324,950L1344,1005 M199,1353L187,1391L166,1454L158,1509 M197,867L174,856L122,831L69,817 M145,162L187,179L214,185L241,197L296,240 M195,94L193,58L187,13 M1233,20L1271,33L1304,54 M1241,144L1300,157L1360,176 M1651,393L1710,410L1766,443 M1426,1168L1416,1196L1414,1230L1390,1290L1383,1355 M613,329L619,306 M245,602L301,592L338,574 M401,572L466,577L508,594L547,623 M156,909L192,925L249,952 M1224,654L1226,614L1227,567L1237,535L1259,487 M1202,963L1207,941L1219,903L1229,848 M1637,340L1632,319L1636,258 M296,1461L292,1483L281,1507 M732,235L692,226 M1673,208L1631,194L1598,182 M1737,418L1733,447L1708,512 M1803,60L1845,59L1870,59L1893,54 M1388,838L1357,835L1303,818L1279,817 M1660,949L1649,980 M2030,495L2023,544L2018,580L2009,620 M1673,705L1739,706L1793,706 M1568,499L1571,555L1569,581L1553,627L1517,683 M1836,378L1800,365L1761,359 M1155,269L1170,210L1172,187L1164,154 M1727,643L1691,635L1666,632 M53,995L90,1013L123,1043L152,1066L176,1095 M1001,1225L1037,1245L1076,1281 M1654,1269L1662,1249L1665,1229L1691,1168 M658,593L616,584L581,584 M1887,1388L1864,1327L1850,1306L1830,1282 M1472,905L1456,942 M1933,838L1868,831L1823,814L1780,805 M102,1442L138,1396L156,1382L215,1354 M506,641L495,667L485,726L471,782 M1059,81L1080,138L1087,171 M199,731L207,682L219,649L242,615L259,597 M428,827L425,791L437,745L435,691 M1532,1194L1590,1220L1632,1232 M233,1175L220,1207L209,1253 M692,597L731,590L764,579 M917,582L943,584L972,580 M75,705L102,698L137,678 M1889,650L1876,710L1870,746 M38,504L13,504 M1693,931L1688,996 M291,1086L288,1137L290,1161 M1183,1061L1150,1055L1110,1041L1080,1030 M1121,97L1052,84L1002,85L942,95L880,115 M381,834L407,847L463,882L491,904 M1514,581L1556,571L1595,564L1623,560 M541,865L485,859L445,855 M210,526L231,465 M1693,179L1726,195L1766,202L1832,205L1882,205 M773,490L747,471L726,446 M1996,724L2041,738 M2051,1112L2003,1102L1952,1093L1926,1095 M1066,198L1045,146L1033,119 M290,1054L298,1096L312,1129 M1594,1182L1604,1246L1619,1306L1638,1345L1648,1408 M415,963L396,1012L361,1061 M562,640L566,680L586,740L611,789 M1478,763L1422,740L1398,730L1343,689 M371,344L369,387L384,451 M1862,11L1802,12L1768,8L1736,8 M1125,284L1090,321L1069,366 M1829,92L1894,100 M1302,1497L1297,1522 M526,1090L522,1121L530,1165L533,1215L524,1263 M369,231L411,249L473,256L499,254 M1313,882L1313,918L1311,953 M1078,403L1073,375L1070,347L1076,286L1077,263 M934,1134L996,1114L1032,1097L1063,1071 M747,513L736,561L722,616L691,674 M1896,270L1919,238L1935,212 M377,836L372,867L367,902L350,969 M1770,311L1774,257L1767,224 M374,399L379,344L375,306L362,240L359,182 M1861,31L1842,17 M1066,84L1067,62L1056,13 M1116,207L1063,214L1034,221 M464,445L442,445L390,444 M1660,1485L1594,1477L1541,1464 M1960,1322L1952,1345L1950,1384L1951,1424 M1020,426L1009,468L1004,521 M191,520L215,477 M47,596L16,583 M1476,1349L1511,1343L1546,1344L1610,1351 M789,520L722,514L671,506L631,502L599,492 M1805,581L1794,528L1783,485 M43,921L12,920 M7,833L67,857L125,872L150,871L209,858 M394,245L335,236L294,233L241,230 M1326,551L1321,577L1322,601L1338,654L1343,696 M1778,1324L1821,1337L1857,1353L1885,1369 M671,508L654,553L631,604 M1705,1219L1713,1272L1725,1299L1733,1348L1759,1411 M1411,638L1401,569L1381,517L1371,498L1359,443 M247,502L275,506L314,521L366,531 M1481,621L1464,672L1447,702L1419,733 M1807,658L1802,692L1800,725 M413,839L477,831L500,824 M415,1320L406,1260L404,1237L402,1185 M96,1305L93,1328L92,1386L104,1430L104,1461 M23,802L11,846 M1280,14L1278,71L1267,103L1251,152 M1341,904L1312,909L1287,917L1258,928L1234,940 M374,33L385,11 M136,897L94,882L38,851 M144,594L98,588L43,575 M1265,524L1291,493L1321,434L1354,387L1377,353 M1717,763L1728,744L1749,703L1756,669L1759,647 M1102,499L1074,490L1026,487L960,473 M1841,169L1830,227L1831,253L1838,285L1851,311 M703,788L682,785L641,768L610,762L570,749 M1799,110L1810,42 M366,508L306,493L278,488 M1850,109L1828,169L1815,196L1808,237 M697,480L642,474L617,469 M957,196L1008,195L1036,203L1087,224 M739,472L738,421L733,360 M1932,527L1927,502L1933,438L1937,415L1942,384 M408,630L405,668L397,717 M549,1007L569,1012L614,1033 M796,424L819,435L859,449L919,450L940,451 M1431,1507L1473,1516L1516,1521 M1377,922L1363,961 M118,1522L137,1480L163,1443 M1058,146L1113,150L1177,161L1245,172L1308,179 M320,565L296,554L260,523 M1593,143L1618,135L1660,116 M1595,376L1594,326L1589,302 M1034,219L1015,285 M470,1213L508,1222 M1115,1161L1139,1160L1163,1166 M1342,1350L1342,1416L1349,1467L1365,1514 M789,987L754,981L726,977 M66,547L70,592L62,631L57,651L46,718 M1227,561L1205,565L1179,565L1142,558L1113,550 M1657,1436L1609,1441L1571,1452L1543,1469 M307,237L239,218L199,217 M284,518L339,536L357,545L392,567L439,617 M154,1189L165,1152L167,1110 M147,176L96,154L62,133L11,117 M1944,236L1886,208L1860,192 M1639,779L1647,716L1641,681L1636,620L1640,581 M1403,689L1409,663L1409,623L1412,578L1413,541 M93,1403L64,1392L41,1388L1,1380 M382,944L361,937L316,920 M1653,149L1643,211L1644,248 M390,256L368,244L316,213L275,167 M227,545L222,598L224,646L232,669 M1629,1436L1602,1491L1597,1517 M1642,248L1575,248L1517,257L1475,267 M1496,1436L1432,1437L1385,1436L1319,1424 M620,4L655,13L677,20L700,22 M1172,1496L1200,1501L1237,1508L1266,1517 M161,741L194,735L225,722L271,714 M318,651L384,672L448,685L474,695L497,711 M224,453L185,443 M1377,126L1308,117L1268,115 M712,23L704,61L700,106 M434,687L420,713L395,756L368,797 M46,473L103,468L124,462L148,459 M1033,672L1072,675L1133,697 M1620,1191L1584,1177L1541,1152 M976,1246L1013,1233L1070,1199 M422,1337L415,1363 M1440,361L1439,335L1421,270L1411,243L1400,223 M375,187L379,154L370,102L377,36 M1736,708L1756,774L1777,828L1789,847 M355,1121L336,1145L306,1178 M31,463L78,473L109,485L137,489L184,499 M1009,1031L1005,1101L1000,1129L992,1159L979,1184 M1410,528L1460,544L1512,557L1552,577L1600,587 M656,973L689,981L711,991 M481,1262L526,1262L572,1275 M1032,521L1004,576L959,628 M1460,1232L1467,1267L1497,1326L1521,1364 M1625,929L1668,883L1683,860L1701,830L1719,803 M1590,398L1578,417L1538,460L1493,506L1442,549 M1009,585L965,576L935,567 M241,233L231,180L230,146L226,122 M111,41L77,28L33,13 M73,1313L119,1315 M891,606L856,601L794,591L766,578 M1620,1395L1664,1392L1715,1397L1781,1404 M1944,892L1951,869L1977,805L1995,781L2033,736 M1918,408L1937,421L1999,449L2024,469 M1022,1194L1011,1224L1007,1264L1009,1313 M786,1131L818,1071L840,1033 M246,463L231,506L209,539L186,563L150,605 M751,665L756,614L765,580 M1805,692L1836,631L1858,597L1884,546L1921,504 M464,1173L443,1169L385,1166L335,1172 M123,887L108,905L77,951L56,983 M526,1037L536,1012L554,981 M1950,418L1918,401L1864,374L1831,345 M1985,1029L2026,1042 M596,658L641,647L676,631L721,598 M1187,782L1159,781 M512,271L562,304L590,322L642,338L695,369 M434,1071L373,1057L354,1047 M1617,428L1567,432L1516,423 M1617,1350L1606,1402L1594,1438L1578,1464 M747,348L766,362L804,391L826,400L856,424 M129,155L156,164L205,186L238,200L269,215 M730,548L725,581L717,615L718,649 M1736,714L1733,774L1738,829 M545,676L552,710L561,769L571,802 M1782,1273L1787,1206 M1191,996L1198,1042L1203,1083 M80,440L35,428 M1122,85L1119,150L1118,181L1122,228L1123,277 M1348,326L1382,338L1430,342L1482,338 M1556,87L1583,91L1604,90L1647,100L1683,103 M1699,281L1720,287L1754,306L1781,325L1804,343 M1987,365L1934,376L1907,386 M1437,1491L1446,1447L1452,1403L1445,1357 M57,1496L31,1488 M1571,860L1576,916L1599,975 M1530,1158L1558,1156L1578,1148 M1799,580L1857,603L1923,611 M392,171L399,198L414,242L422,269L438,311 M973,61L1040,58L1098,69L1133,71 M1364,244L1300,233L1265,231 M1539,1194L1537,1252L1524,1320L1517,1383 M1242,1459L1205,1422L1184,1404 M1602,95L1563,99L1510,94L1488,95L1443,96 M1113,400L1113,343L1117,289L1120,237 M1379,408L1381,351L1371,298L1376,239L1381,209 M333,54L357,3 M120,150L181,155L226,170L264,173L315,162 M471,45L462,91L443,138 M110,821L59,818L38,818L5,814 M1245,1038L1201,1032L1164,1018L1122,1004L1079,994 M820,121L811,161 M606,560L585,621L582,647 M132,1028L141,1077L158,1141 M295,1187L331,1194L394,1215L445,1249L470,1264 M630,636L695,651L729,663 M84,767L44,822L24,848L9,880 M691,640L690,685L691,717 M1737,739L1731,770L1733,803 M1604,188L1556,189L1503,202L1469,206 M92,585L153,609L192,614 M292,971L320,985L354,1001L383,1010 M871,423L875,375 M860,126L910,123L932,120L969,127 M738,1404L763,1404L787,1399L824,1381L888,1355 M1841,1456L1846,1430L1850,1404L1873,1345 M1529,1363L1538,1307L1561,1242 M234,213L218,262 M776,1377L774,1430 M674,996L677,973L688,927L699,880 M438,991L439,1060L429,1117L428,1184L433,1209 M475,1370L540,1366L574,1371 M1103,530L1098,470L1108,403L1126,337 M316,800L294,791L239,752L221,742L185,727 M281,899L277,874L256,819 M1486,1204L1521,1210L1578,1214L1620,1213 M968,1208L911,1175L863,1127 M1682,109L1683,146L1689,168L1700,207L1709,246 M597,26L656,17 M1556,239L1553,289L1558,310L1578,352 M860,612L858,554L867,495L886,433 M1383,703L1425,722L1482,753L1508,758L1553,779 M554,1365L561,1330L561,1310 M1595,419L1651,412L1718,405L1739,403 M694,159L708,100L719,54 M374,585L397,541L441,491 M1701,348L1695,391L1694,444L1705,496L1699,562 M1953,1437L1941,1495 M1984,1479L1983,1420L1983,1387L1977,1334 M1312,223L1293,289L1263,348L1224,397L1205,441 M1502,1272L1547,1276L1569,1278 M1410,1301L1409,1342L1396,1410L1383,1447L1361,1481 M308,673L372,686L396,698L449,729 M275,1225L272,1254L273,1306L258,1374L261,1421 M151,1402L163,1354L175,1328 M751,95L707,72L665,30 M564,1051L603,1052L653,1051L713,1043L779,1023 M1089,344L1154,350L1198,355L1231,359 M134,532L67,514L32,508 M1097,939L1140,948L1171,964L1192,974L1243,1008 M47,145L35,185 M429,1135L408,1123L385,1117L317,1116 M1472,802L1490,816L1540,851 M916,42L896,44L827,58L799,65L743,68 M259,785L197,764L141,749L111,751L43,744 M1807,466L1802,509L1794,560 M500,191L471,186L426,177L401,177L357,168 M1745,329L1739,348L1706,402 M95,1443L89,1474L91,1509 M903,190L912,172L936,132L978,79 M459,303L466,256L473,202 M103,184L121,117L126,95L151,53 M497,717L439,697L371,694L338,702L305,702 M2051,909L2007,914L1944,914L1883,915 M1872,1271L1866,1293L1844,1330 M594,656L562,643L505,603L468,572 M428,130L453,76L466,53L502,3 M1479,209L1503,222L1541,254 M1136,243L1093,218L1044,204L1014,198L960,168 M1213,395L1252,406L1282,410L1302,406 M1657,1326L1650,1374L1631,1421L1617,1477 M1245,441L1242,471L1239,499L1233,520L1223,540 M1583,886L1578,915L1570,980 M388,1347L450,1378L507,1412L552,1432 M507,977L498,1030L499,1055 M1652,449L1708,470L1740,484L1775,490L1841,483 M814,1411L810,1387L799,1355 M1074,262L1080,227L1079,173 M1505,891L1447,886L1413,877L1374,856L1330,837 M300,767L258,765L223,758L161,756 M1573,1511L1582,1458L1585,1396L1589,1333L1590,1311 M455,445L447,380L439,328 M336,541L354,494L358,433 M1158,646L1138,697L1119,738L1102,802L1092,838 M909,318L901,381L890,432L888,499L882,549 M1451,549L1478,513L1510,474L1543,453 M312,296L277,265L242,210 M1619,1410L1684,1431L1737,1443 M972,1250L967,1303L964,1342 M225,1407L235,1363 M385,769L451,762L510,738L540,726L568,716 M516,1131L537,1141 M1574,679L1567,730L1554,775L1528,831L1510,858 M213,195L222,227L223,265 M1411,482L1353,476L1309,471 M302,1114L273,1099L239,1076 M872,1193L905,1195L972,1199L1029,1191L1077,1172 M455,194L523,187L543,188 M1573,103L1587,159L1591,205L1593,255L1602,283 M386,798L397,748L406,705L413,644L409,614 M1772,1361L1767,1413L1760,1464 M1246,653L1250,673L1259,716L1263,739L1292,797 M1198,620L1213,587L1230,550L1246,507 M158,1037L181,1041L245,1059 M1690,1269L1675,1324L1660,1358 M1362,1416L1370,1347L1379,1295 M984,578L1027,595L1046,608 M2041,521L2029,571L2025,619L2022,662L2018,700 M306,385L351,398L386,418L427,447L449,472 M1402,272L1440,265L1473,255L1500,249 M541,269L528,312L518,350L512,377L506,398 M821,547L822,527L818,504L800,440 M1410,236L1421,203L1428,166L1440,121L1441,54 M676,1100L684,1047L683,1025L675,991L659,960 M54,798L40,840L33,894L28,935L27,990 M579,1049L631,1057L692,1074 M935,1289L910,1279 M1926,696L1951,697L1995,694 M596,597L616,606L674,632L735,661 M839,993L809,989L769,981L746,981L691,990 M1582,1474L1584,1453L1589,1419L1609,1366 M1040,1053L1099,1085L1138,1106 M405,1209L459,1239L480,1259L501,1279L537,1303 M548,284L550,307L549,363L562,428L566,454 M1978,1064L1932,1031L1885,1012L1829,1001 M1637,946L1692,961L1713,965L1773,983L1805,984 M1717,1282L1719,1303L1711,1338L1711,1360 M1864,862L1912,884L1964,909L2027,937 M1617,894L1619,958L1619,980 M1145,1102L1130,1156L1097,1209L1070,1268L1054,1287 M1902,1016L1870,1058L1858,1075 M1766,960L1737,952L1688,938 M2032,745L2038,720L2043,672 M1038,573L1018,567L996,553L944,512 M1952,1158L1948,1089L1942,1050L1933,1002 M630,850L633,884L627,918 M1267,957L1328,985L1374,994 M1595,772L1574,831L1561,879L1545,916L1528,963 M239,109L254,81L263,52 M1616,850L1559,871L1522,888L1459,912 M404,698L428,701L472,707L503,713 M639,1070L682,1069L716,1072L740,1079L770,1087 M149,694L140,726L142,775L141,804L150,850 M619,1067L597,1112 M480,363L528,353L591,358L617,368 M1818,760L1819,701L1815,645L1812,616 M233,1093L188,1072L140,1043 M1885,905L1886,870L1883,825L1883,769L1880,750 M1271,603L1271,564L1269,516L1255,457L1236,409 M1419,1408L1385,1381L1346,1327L1332,1311L1307,1268 M1219,1367L1193,1425L1184,1476L1186,1498L1187,1520 M1033,465L1023,487L985,530L954,577L944,600 M531,868L508,863L447,862 M1511,522L1515,499L1539,453L1546,427L1565,388 M1157,1004L1203,1023L1227,1027 M645,631L623,623L561,596L496,584L446,578 M1260,1392L1258,1416L1252,1447 M729,12L743,56L753,114 M241,945L245,969L252,1011L247,1063L247,1100 M429,1123L400,1126L339,1136 M1670,718L1614,709L1571,709L1537,713 M406,877L460,887L485,899L505,902 M15,863L17,842L20,806 M13,533L19,563L19,592L20,618L25,648 M2041,1087L1990,1099L1968,1103L1924,1102L1856,1087 M1257,58L1235,111L1222,128L1197,151L1163,184 M1714,600L1706,656L1692,714L1682,769 M1640,201L1578,182L1515,157L1477,132 M903,1323L950,1332L1005,1356 M1968,541L1989,497L2002,461L2019,435L2042,369 M1629,183L1641,127L1647,103L1645,76 M1199,874L1169,922L1157,943L1146,986 M1850,567L1835,612L1807,673 M100,1047L110,1008L112,985 M1629,480L1595,476L1570,473L1515,470L1458,472 M1278,156L1227,157L1205,157L1143,165 M427,945L415,965L372,1013 M1741,409L1743,342L1740,290L1736,266 M474,962L454,960L429,959L363,959L304,970 M602,1112L623,1110L691,1108L746,1116 M256,818L198,794L138,777L99,755 M1227,299L1232,277L1255,221L1260,179L1253,123 M1101,47L1165,63L1191,77L1211,82L1256,110 M1899,1285L1833,1273L1769,1250L1716,1223L1680,1203 M1908,870L1970,880L2011,898 M1439,1324L1478,1339L1498,1345 M623,331L613,351L574,396L538,427L515,461 M1106,725L1133,729L1186,746L1211,761 M1553,250L1538,299L1530,364L1507,421 M248,1067L279,1024L304,963L327,918 M1703,88L1669,75L1629,70 M1722,751L1700,760L1675,772 M967,172L1016,197L1053,213 M1320,145L1340,102L1356,65L1388,12 M397,210L346,210L305,199L277,194 M1514,857L1494,893L1474,948 M759,390L774,323 M260,566L302,574L369,588 M340,272L352,228L353,208L366,163 M259,1120L210,1112L156,1105 M11,1L46,5L98,14L165,22 M1137,409L1121,453L1089,507L1062,550 M909,1268L891,1299L867,1328L824,1365L776,1407 M1142,384L1154,339L1158,304L1152,262L1130,208 M1092,1105L1113,1063L1125,1038 M1564,567L1602,576L1655,580 M1546,1402L1577,1404L1627,1403L1656,1404L1703,1407 M1050,939L1067,899L1071,873 M594,748L595,720L593,668 M704,200L715,170L725,147 M135,809L84,799L23,787 M725,273L725,230L725,201 M1184,873L1231,895L1263,918 M1869,264L1820,251L1779,250 M1113,1111L1162,1132 M1784,102L1809,46 M848,1078L906,1100L934,1115L953,1126 M621,769L633,729L643,677 M407,362L370,336L308,306L277,290 M14,966L63,972L133,972L153,967 M493,1123L521,1122L570,1120L629,1111 M1850,962L1857,1028L1866,1064L1868,1097 M1330,205L1353,219L1413,244 M585,1102L538,1083L503,1058L456,1024 M619,457L639,456L665,453L725,434 M554,677L516,674L464,683L401,701 M557,837L524,825L502,824 M1811,1048L1766,1041L1719,1039 M1129,130L1097,169L1077,211L1054,258 M1648,932L1646,908L1659,853L1672,827L1704,785 M1474,1154L1448,1185L1402,1234 M885,1350L898,1395L919,1429 M1474,4L1415,0L1390,3 M1500,188L1508,149L1514,97L1516,37 M1701,1256L1703,1299L1713,1364 M1255,92L1234,147L1223,173L1214,215L1203,239 M1539,842L1504,821L1473,805L1449,800L1419,803 M871,577L891,591L926,607L973,624 M1507,1304L1493,1344L1481,1389L1462,1442L1439,1473 M972,1140L1032,1159L1084,1183 M1030,1172L1041,1127L1047,1100 M863,1354L889,1357L931,1354L958,1360 M1887,970L1877,1013L1865,1055 M127,547L100,536L40,515 M676,560L673,588L679,626L695,676 M1822,275L1802,222L1774,168L1760,150 M2007,944L1998,963L1989,988L1978,1021L1949,1081 M520,287L475,255L441,224L405,179L362,145 M1156,592L1112,578L1058,546L1004,526L965,500 M1678,1500L1713,1496L1734,1490L1781,1473 M307,63L256,66L233,63L202,64 M1128,1146L1133,1209 M1874,30L1876,52L1881,81L1885,112L1879,167 M1038,92L1064,85L1095,69 M1745,547L1744,518L1742,496 M1905,863L1861,854L1812,837L1759,799 M1401,1217L1403,1279L1401,1300L1402,1327 M1890,289L1853,278L1803,256L1777,241 M341,372L336,306L347,247L355,218 M1243,646L1243,624L1251,590 M1612,901L1563,905L1536,906L1502,903L1473,907 M143,1305L138,1330L138,1351L127,1413 M82,858L81,879L71,940 M1816,21L1756,27L1719,42 M1539,200L1567,141L1592,88 M1092,11L1039,16L1001,28L966,31 M531,744L536,765L564,822 M1074,25L1127,59L1190,86L1215,100 M230,664L255,666L290,679 M338,634L379,635L435,624 M1985,397L1983,439L1983,482 M1580,352L1525,322L1479,311L1422,287 M36,438L5,430 M553,685L583,690L651,686L704,689 M61,1374L3,1357 M1277,227L1277,171L1281,143L1288,88L1295,64 M1768,505L1737,567L1730,589 M2034,1495L2026,1521 M1609,334L1608,313L1600,255 M310,520L319,478L326,414 M417,748L432,694L439,665L459,607 M1268,345L1288,303L1315,263 M1840,357L1802,362L1740,360 M378,1003L412,1007L474,1015L526,1009L555,1005 M479,32L482,72L491,136L493,156 M1753,1409L1766,1385L1785,1347 M310,363L308,411L314,443 M142,1386L149,1361L158,1342 M1440,102L1411,95L1371,74L1331,49 M881,1069L836,1074L792,1081L733,1092L681,1096 M1157,212L1183,209L1248,204L1311,208 M142,168L84,140L44,126 M779,94L815,104L872,104 M217,1433L199,1467L172,1498 M754,483L805,498L869,511L927,519L962,531 M1029,82L1027,112L1029,177L1018,243 M31,1319L35,1299 M1413,547L1402,610L1402,656L1407,683 M624,718L623,692L615,644 M415,1268L446,1262L505,1251 M1157,998L1136,980L1102,937 M1137,497L1196,500L1243,509L1292,505 M943,309L944,279 M627,601L636,580L666,543L693,514L705,497 M1331,502L1340,480L1382,427L1400,401L1430,378 M837,133L834,85L827,18 M36,687L31,720L25,773 M502,1255L519,1304L524,1352L522,1376 M1983,970L1956,973L1926,977L1897,984 M705,1010L751,1036L768,1050L792,1066L848,1100 M488,193L491,149L500,104L505,37 M616,381L628,318 M1479,255L1518,243L1556,235L1616,216L1655,208 M1959,1055L2010,1068 M1664,1442L1620,1430L1591,1412L1567,1403 M1746,41L1740,72L1733,92L1729,116L1721,140 M446,844L482,855L511,860L574,854 M1023,45L1062,37L1116,24L1165,15L1221,19 M1152,1057L1212,1055L1234,1054 M1629,183L1633,163L1653,112L1669,82 M751,428L814,421L852,427L917,451L978,461 M1796,1252L1760,1301L1735,1361 M348,1226L318,1278L299,1313 M1289,528L1274,576L1261,605 M1240,871L1194,851L1159,825 M1965,811L1919,788L1868,778L1820,769 M1198,1384L1173,1386 M234,988L207,976L179,969L129,942L88,907 M901,1432L857,1416L810,1401L775,1383L737,1347 M226,766L228,737L250,677 M694,915L700,863L702,798L703,754L704,684 M1884,1474L1917,1495L1947,1510 M1378,1280L1360,1315L1326,1352L1289,1375 M1307,1013L1317,983L1340,930L1360,880 M1048,1301L1025,1302L981,1303L914,1308 M1163,287L1137,272L1075,243 M1472,316L1413,308L1382,295L1355,276 M499,286L523,295L590,310 M246,1169L234,1112L209,1055L186,1017 M1164,382L1140,373L1101,358 M1354,389L1344,445L1334,487L1318,516 M758,881L722,878L695,878L633,895L604,902 M1237,234L1291,228L1347,212 M108,902L103,955L89,1019L62,1079L43,1125 M1088,486L1090,523L1099,573L1120,618L1160,668 M1792,1306L1791,1330L1798,1388L1813,1428L1826,1480 M123,933L117,997L124,1035L137,1089 M1923,823L1903,819L1860,811L1811,814L1792,811 M872,1101L845,1107L786,1121 M1060,602L993,582L950,581L889,594 M1701,365L1692,400L1669,458L1660,515 M1108,1167L1061,1182L1009,1196L965,1201 M375,572L356,633L343,673 M944,120L907,112L844,97 M1881,1486L1913,1496 M1372,184L1367,204L1360,237L1362,257 M1106,805L1098,864L1090,910L1080,943 M557,542L569,485L565,446L569,418 M1358,654L1337,681L1322,708L1298,746L1274,787 M1600,383L1599,350L1592,307 M479,1265L487,1208L482,1174L457,1120 M1031,546L966,552L903,555L864,565 M528,16L556,32L596,57 M1132,518L1165,478L1178,453 M793,988L778,922 M1985,915L1938,923L1901,918L1872,920 M1374,767L1336,759L1273,737L1220,712 M518,925L547,944L595,976L619,989L635,1006 M945,1275L950,1302L957,1356 M1553,136L1560,202L1571,235L1577,295L1586,344 M1431,328L1421,395L1408,439 M626,1328L625,1385L632,1418 M729,971L665,946L624,940L566,932 M1281,903L1227,882L1172,870L1117,868 M1165,287L1129,283L1099,278L1071,266L1023,248 M711,607L703,637L696,666L689,724 M1446,532L1446,576L1455,610 M1037,1140L987,1132L949,1131 M195,719L145,727L91,731 M2003,1443L2044,1435 M1845,473L1807,476L1744,501 M1253,507L1263,479L1273,413L1290,358 M1797,611L1800,582L1810,534L1823,511L1831,486 M1036,197L1059,154L1083,113 M1130,212L1113,247L1098,277L1066,313L1031,341 M1265,819L1306,810L1368,807L1405,810L1466,829 M1260,267L1270,324L1276,360 M1542,965L1547,921L1552,860 M1565,1172L1548,1224L1517,1283L1475,1329 M1408,1459L1417,1393L1420,1353L1413,1304L1393,1254 M570,476L592,483L638,510L680,537L715,561 M2005,1382L1987,1441L1979,1487 M228,261L265,285L295,310L315,338 M1630,366L1643,415L1647,435L1645,486L1646,507 M246,1392L243,1446L240,1490L246,1520 M323,773L321,808L312,860 M1527,679L1502,684L1480,688L1429,711 M1440,245L1392,228L1352,204 M1229,1429L1189,1421 M2016,1035L1965,1013L1900,1001L1852,978 M170,210L235,225L262,223L287,227 M663,867L618,842L597,832L552,799L507,774 M1207,909L1223,868L1232,823L1229,757L1238,717 M1174,594L1168,651L1150,698 M756,433L818,435L869,429 M1398,1198L1407,1246L1407,1297L1425,1360 M1561,876L1567,847L1573,825L1580,764 M399,658L367,661L327,656L272,663L247,673 M1501,1261L1435,1260L1384,1256L1322,1232 M1363,743L1404,743L1448,737 M409,1140L377,1136L333,1137 M1874,470L1897,480L1917,495 M648,545L670,554L715,564L764,583L784,596 M1796,1215L1759,1197L1706,1186L1653,1163L1615,1143 M1788,645L1790,583L1792,553 M713,452L783,450L813,446L859,426L886,416 M1321,918L1308,958L1295,999L1282,1019 M491,592L434,568L409,562 M693,4L753,20L785,39L805,49 M1406,1513L1433,1463L1459,1432L1504,1401L1528,1388 M1249,362L1286,369L1326,377L1350,383L1373,391 M74,737L132,771L169,792L225,807 M355,697L316,692L258,692L229,700L176,703 M1251,179L1214,161L1191,154 M537,1214L512,1275L479,1337L464,1368 M1091,642L1051,630L1026,625 M575,337L634,350L676,367L724,376 M1305,83L1332,36L1350,12 M1901,329L1910,299L1927,266L1946,241 M1304,372L1282,365L1256,351L1221,318 M1108,68L1040,53L981,56L934,62L909,64 M1269,1497L1315,1498L1342,1493L1388,1479 M256,722L234,718L186,720 M1437,781L1454,754L1466,714L1469,666 M1817,1344L1784,1335L1760,1334L1699,1338L1662,1347 M1438,291L1473,289L1523,278L1559,274 M294,497L323,508L351,526 M429,592L441,530L444,499L456,444L453,398 M1211,267L1242,293L1293,340 M607,1394L618,1364L624,1318 M281,1100L291,1060L316,1010L323,983L324,939 M1631,519L1597,520L1565,527 M578,1102L601,1114 M389,1178L380,1151L355,1107L340,1046L314,998 M855,107L795,104L772,110 M703,147L687,203 M1527,895L1487,870L1438,822L1398,778 M1460,1326L1459,1293L1466,1267 M390,1140L452,1152L475,1164L496,1179L523,1215 M1416,357L1389,393L1352,431L1325,480 M1818,393L1799,454L1773,511L1765,556 M1467,1449L1491,1455L1537,1474L1557,1480L1575,1492 M2027,1084L2030,1123L2036,1143 M1032,1105L1044,1044L1054,1006L1069,953L1072,932 M1265,413L1317,429L1357,433L1416,426 M1321,44L1299,35L1278,26L1251,21 M1297,935L1286,999 M458,229L426,212L396,188 M1105,192L1101,239L1091,289L1081,310 M12,442L12,476L8,506 M248,709L267,657L286,594 M1865,1358L1813,1324L1772,1296L1728,1272L1689,1247 M1740,450L1732,471L1709,510L1672,543L1618,569 M1810,501L1809,558L1804,618L1816,678L1815,740 M480,1278L419,1284L389,1285 M490,579L504,546L507,523 M1055,912L1030,912 M1893,1380L1890,1424L1880,1457 M281,1L246,5L212,8L165,3 M1498,1400L1462,1386L1436,1369 M1740,1293L1742,1264L1732,1219L1721,1186 M1691,756L1742,764L1772,760L1797,760L1864,746 M71,70L66,100L61,125L56,152L47,171 M1263,514L1241,553L1231,573 M957,1279L966,1325L975,1345 M544,1072L588,1076L657,1075L698,1086L744,1091 M1706,473L1760,491L1795,510L1830,523 M448,764L463,743L511,698 M1718,766L1705,833L1697,868L1676,931 M1582,49L1524,34L1499,22L1483,9 M1733,1505L1744,1488L1754,1452L1769,1404L1800,1343 M962,1187L1026,1210L1057,1218L1109,1226 M1273,1336L1304,1347L1358,1371 M79,474L125,497L189,513 M1481,61L1440,62L1382,48L1336,32 M1732,165L1747,109L1753,83L1765,34 M111,622L47,631L1,638 M386,1107L423,1118L460,1125L524,1120L582,1119 M556,434L579,438L624,435L676,434 M1572,520L1504,533L1450,534L1419,543L1375,556 M1462,373L1422,421L1391,456L1357,485L1340,497 M1754,164L1741,196L1733,247L1731,274L1720,315 M1935,841L2001,853L2043,854 M1326,322L1372,317L1432,299L1484,298 M53,748L40,778L19,803L3,829 M354,509L298,482L275,468L214,451 M895,76L889,96L877,125 M713,1365L738,1376L778,1395 M116,158L130,118L153,84 M606,749L588,731L555,701 M339,624L301,619L249,627L180,622L159,622 M1507,62L1575,67L1630,81L1650,86 M162,1020L195,1049L236,1104L273,1146L307,1181 M1523,1485L1521,1441L1518,1404L1520,1378L1522,1341 M728,213L732,278L743,340 M892,62L909,36L929,12 M419,589L414,531L403,496 M1088,999L1098,946L1106,927L1114,877 M1202,1091L1179,1086L1139,1083L1096,1082L1068,1087 M913,385L906,430L898,482L895,506L898,530 M1762,1380L1827,1387L1856,1395L1917,1402L1961,1408 M1013,336L1025,315L1044,296L1077,269 M555,1381L533,1417 M315,645L352,639L392,633L439,626 M1658,377L1689,317L1724,277L1767,224L1804,173 M945,387L902,386L844,401 M1589,33L1589,54L1579,90L1571,110L1557,138 M702,1365L709,1394L718,1429 M1559,359L1568,403L1580,444 M1612,1204L1638,1220L1683,1264L1735,1291L1790,1317 M1801,68L1794,31 M1003,1084L1068,1073L1090,1072 M309,1320L303,1277L293,1249L292,1221 M43,21L51,74L64,121 M940,1304L933,1370L932,1400 M584,583L614,525L629,485L633,427L641,406 M1169,118L1101,123L1057,138L1025,152L990,160 M243,1038L197,1013L144,983L91,959L28,938 M1929,897L1962,895L1988,892L2021,884 M320,954L305,974L256,1018 M1911,468L1945,482L1996,489L2046,490 M312,1026L276,1009L243,995L185,986 M1616,843L1632,790L1637,737 M780,25L743,22L688,29 M566,748L592,753L644,751 M1680,627L1689,693L1685,735 M341,1349L363,1299L375,1259L402,1218L418,1200 M1693,840L1728,850L1772,851 M1095,449L1038,417L995,387L964,357 M1614,504L1553,489L1531,485L1477,464 M662,468L631,512L612,551L595,572 M182,1415L175,1457L172,1521 M1570,459L1551,501L1539,532L1535,563 M155,541L117,517L93,493 M270,475L318,474L375,469L421,477 M1027,166L963,173L939,177L903,176 M1894,892L1921,893L1970,909L2017,917L2040,924 M726,476L730,440L745,381 M1662,1204L1660,1237L1650,1304 M1263,1414L1263,1457L1261,1479L1259,1500 M1045,658L1031,675 M2024,1355L2000,1350L1943,1335 M1904,1274L1920,1324L1941,1362L1950,1404 M368,885L350,930L339,969 M1086,135L1099,109L1125,69L1146,23 M1290,466L1284,500L1269,561 M201,1359L197,1333 M1703,244L1709,215L1713,183L1714,116 M683,1001L700,1066L710,1100 M1473,752L1527,755L1569,756 M361,420L327,406L296,387 M1712,707L1743,722L1792,769 M1558,1428L1582,1378L1601,1342 M1988,359L2011,357L2049,355 M514,274L447,261L407,264L339,260 M55,707L44,754L39,810L34,839 M1963,1461L1977,1420L1982,1394 M569,842L579,785L606,723L609,699 M1699,988L1705,958 M620,32L655,57 M215,1479L259,1493L283,1508 M954,1187L977,1187L1034,1169L1082,1139 M91,1015L92,960L98,896L93,869L82,846 M1598,409L1555,387L1530,381L1496,370 M1277,293L1335,302L1364,308L1426,333 M1876,1361L1871,1402L1866,1429L1864,1477 M1447,811L1437,859L1426,927L1424,958 M150,108L169,124L189,155L210,183 M540,1077L603,1075L664,1080 M1728,517L1669,509L1622,512L1566,529L1497,533 M746,1387L739,1367 M1512,305L1532,307L1599,309L1632,303 M903,371L885,407L877,448L870,469L853,512 M1966,452L1961,516L1963,573 M939,321L910,309 M1129,464L1139,447L1150,429L1190,381 M935,505L940,473L949,448L967,401 M186,1250L245,1263L273,1263 M1338,675L1308,713L1273,743L1238,762L1211,779 M466,574L471,534L482,478 M1993,1403L2017,1400L2051,1390 M982,416L966,444L951,470 M374,343L326,351L298,352 M553,1118L492,1087L427,1073L365,1056 M1132,1426L1121,1480 M294,1054L249,1059L184,1080L144,1091L80,1089 M477,306L461,373L453,415L442,466 M2049,1407L1999,1404L1954,1408 M962,61L994,56L1042,61 M1915,757L1977,767L2022,787 M742,1428L743,1402 M408,990L421,966L430,936L432,907 M1623,663L1686,688L1738,716L1802,744 M1382,828L1421,834L1473,850 M1547,369L1555,348L1559,318 M1126,211L1125,185L1116,135L1104,89L1086,28 M457,1207L450,1141L442,1104 M1786,296L1852,279L1893,265L1951,256L2010,258 M1149,457L1142,397L1126,349L1121,324L1123,283 M674,14L699,33L727,59 M583,445L625,453L681,457L703,456 M1344,820L1339,874L1330,921L1320,987 M450,761L459,728L478,690L487,652 M1217,262L1245,232L1288,195L1306,180L1333,147 M991,579L964,577L898,570 M866,555L881,529L890,501 M1292,274L1241,283L1198,301L1178,307L1148,311 M220,1370L235,1426L233,1474 M420,513L432,452L433,387 M1962,889L1949,920L1930,976L1922,1002 M240,834L301,835L342,845L368,848L400,856 M791,51L772,41L714,21 M510,379L492,364L457,331 M1474,910L1475,958 M1964,865L1909,880L1863,909 M804,1354L778,1355L749,1353L696,1340L651,1326 M1857,633L1914,634L1961,632L1988,631 M346,906L359,876L371,857L388,828 M1706,1220L1699,1252L1700,1301 M2038,1410L2036,1379L2012,1319 M1875,878L1907,885L1973,882L2009,890L2052,902 M1015,980L992,975 M1156,1135L1157,1089L1166,1051L1167,1010L1159,971 M631,392L629,413L621,473L616,541L624,604 M1116,783L1135,718L1145,652L1161,618 M138,444L160,443 M239,1026L224,1087L193,1146 M1798,410L1854,429L1899,452 M1605,1184L1661,1192L1697,1205L1758,1217 M1579,1139L1579,1180L1589,1216L1599,1254 M1650,626L1655,686L1659,741 M993,427L1049,417L1119,420 M1822,182L1875,197L1904,213 M293,864L256,858L200,832L166,802 M1298,112L1298,81L1284,25 M1584,631L1560,673L1527,727 M494,266L505,307L527,356L540,372 M328,672L327,641L332,602L328,534L331,467 M289,1201L256,1189L214,1186L152,1192 M1663,192L1658,222L1656,263 M1172,187L1160,223L1142,287L1106,343 M526,468L521,516L509,553 M2021,545L1969,532L1930,509 M914,419L960,443L982,457 M670,1449L687,1406L695,1374 M213,1508L234,1462L269,1415 M24,560L50,497L66,453 M1785,1383L1786,1337L1798,1278L1799,1240 M1543,805L1517,797L1470,795L1423,803L1356,800 M487,994L501,944L529,897 M246,109L241,146L245,205 M260,1459L304,1472L347,1493 M1596,156L1605,127L1628,92 M1941,1088L1901,1065L1854,1025 M810,977L771,967L731,946L688,916 M1006,528L1004,573L1009,628 M1619,4L1599,47L1561,99L1539,140L1513,196 M651,514L596,511L571,503L516,494L487,490 M1387,1252L1409,1209L1423,1177 M517,1147L528,1109L550,1054L567,1018L585,984 M1747,650L1694,633L1628,616L1589,606L1546,593 M38,832L104,821L147,822 M624,1012L629,961L620,911 M1777,762L1758,816 M1118,597L1175,600L1230,605L1282,620L1302,623 M538,591L559,600L578,609L626,616 M1890,1303L1898,1350L1911,1412L1925,1462L1931,1494 M1528,503L1502,490L1451,448 M1995,1470L2027,1428L2047,1377L2050,1336 M234,699L214,743L205,767L184,812L162,841 M509,1158L538,1102L546,1069 M1771,801L1824,822L1861,832L1913,858L1935,871 M1002,1264L1014,1304L1021,1324 M414,488L399,424L393,366L389,305L388,262 M394,1331L415,1337L457,1353L516,1358 M550,1300L530,1292L498,1273 M1539,847L1485,847L1417,849L1361,864L1313,878 M1151,1065L1192,1012L1212,993 M2044,1027L2032,1078L2018,1128L2010,1152 M1735,1300L1683,1296L1647,1300 M1967,351L1966,299L1959,266L1951,216 M606,350L631,341L677,330 M1420,155L1392,147L1358,129 M1219,278L1222,231L1236,188L1242,120 M1663,900L1685,903 M1417,307L1419,274L1424,228 M1064,287L1126,308L1156,314L1208,340L1226,354 M807,1132L763,1123 M1574,822L1571,875L1556,931L1553,967 M68,893L46,925L18,960 M402,724L398,792L408,845 M1169,146L1166,195L1158,240L1137,286L1093,339 M186,1481L183,1425L187,1387L183,1360 M1399,1346L1424,1357L1478,1392 M1149,531L1146,569L1139,627L1129,663L1115,707 M1471,265L1503,281L1538,303 M299,1197L283,1257L273,1278 M1522,927L1523,889L1511,844L1511,822L1508,755 M642,474L709,480L753,475L802,467 M914,1027L972,1061L1025,1080L1086,1107 M1214,334L1159,299L1120,259L1077,228 M1492,329L1427,338L1363,334L1303,319 M1643,1218L1653,1180 M1356,436L1364,417L1371,392L1387,342L1396,308 M1995,314L1958,293L1911,258 M1712,1520L1661,1495L1602,1459L1550,1431L1499,1409 M1788,73L1778,132L1764,180 M1473,616L1455,644L1434,709L1432,769 M272,951L282,922L291,892 M1880,235L1845,241L1823,241L1774,241 M426,1104L457,1048L473,1004L476,966 M1559,561L1546,583L1532,613L1499,650L1483,673 M1222,68L1179,73L1139,77L1094,81L1060,83 M1514,731L1522,699L1535,650L1538,594 M1045,106L1069,58L1080,40L1098,20 M223,1197L213,1237 M182,1058L175,1002L183,935 M1852,425L1887,421L1907,417 M1569,534L1507,539L1465,542L1443,539L1400,536 M761,237L765,262L767,320 M295,147L265,193L242,243L232,279 M359,1176L309,1171L280,1164L218,1145L178,1141 M528,515L525,580L535,643L539,665 M1666,1377L1663,1321L1658,1258L1644,1219L1629,1197 M1,1517L41,1518 M1671,1397L1666,1422L1648,1480L1640,1510 M1281,201L1336,209L1379,210L1404,205L1455,190 M1361,1353L1405,1367L1443,1388 M653,969L658,912L666,886L680,848L691,830 M711,1065L734,1074L775,1096L826,1140 M1437,249L1456,184L1460,162L1483,102 M485,1330L463,1325L399,1315L363,1304L314,1295 M812,609L814,649 M1851,716L1894,745L1916,760 M67,153L77,113L86,87 M1705,458L1733,458L1784,464 M440,575L445,547L448,488L447,438 M173,532L233,534L272,544L316,567 M88,902L81,936L73,976L62,1030L50,1094 M352,591L327,588L300,576L282,562L241,531 M1515,81L1537,85L1589,83L1624,78 M1117,1014L1114,986L1114,948 M242,1053L203,1054L139,1037 M1846,75L1900,67 M1354,440L1316,491L1284,544 M1973,774L2007,719L2026,682 M286,200L287,225L288,278 M1396,702L1411,666L1416,642L1446,588 M937,146L915,142L886,142L848,138L797,135 M488,377L488,326L493,257L488,193 M646,666L616,664L565,645 M1652,635L1697,658L1751,695 M1201,256L1157,261L1093,275L1069,280L1032,283 M94,624L117,585L134,551 M91,872L69,910L46,947L28,995L15,1020 M1199,602L1162,592L1095,575L1029,565 M1043,1290L1030,1229L1030,1199 M1428,434L1450,448L1488,474L1516,487 M425,286L421,343L404,403 M749,61L701,32 M1439,1211L1463,1216L1524,1218 M1382,1500L1412,1505 M965,632L1012,629L1044,633L1067,641 M972,389L1031,405L1084,435L1130,472L1165,491 M1953,1034L1957,1006L1973,960L1987,892L1985,837 M1264,621L1270,560L1277,526L1287,500 M1603,305L1623,256L1637,235L1648,197 M893,1099L873,1085L824,1068L795,1065 M1435,148L1432,169L1425,219L1414,265 M1643,571L1653,634L1666,665L1693,703 M1185,572L1230,564L1266,555 M378,695L389,670L398,645 M1823,647L1814,685L1811,715L1806,743L1807,773 M1405,1448L1401,1513 M1858,890L1871,833L1902,773L1923,747 M1873,75L1853,137L1825,198L1796,238L1746,285 M1126,1050L1126,1076L1122,1134L1126,1194L1120,1230 M1687,494L1684,518L1682,544 M1015,1199L1021,1224L1030,1272L1041,1324 M881,1422L885,1393L877,1345 M301,971L265,949L210,912L179,885 M1470,960L1430,956L1407,958L1348,983 M476,323L534,334L590,329L614,330L664,342 M1584,649L1616,588L1645,554 M1721,160L1744,122L1779,71L1809,15 M204,924L206,961L199,998 M77,182L128,186L194,178L231,183L276,186 M1173,1453L1174,1384 M836,113L806,106L781,101L728,105 M899,1036L921,1042L953,1059L987,1071L1008,1079 M1355,448L1351,404L1334,347L1316,299L1311,274 M1627,256L1573,260L1509,286L1463,294 M232,972L211,968L163,963L135,966L96,973 M714,374L712,320L707,300L701,280 M1148,1113L1130,1050L1115,1021 M824,1432L773,1387L756,1369 M1399,617L1428,613L1495,622 M757,1066L755,1025L768,974 M738,842L722,899L721,931L725,971 M1766,652L1705,654L1655,647 M1476,1348L1487,1331L1512,1298L1561,1248 M806,511L782,506L746,501 M1650,237L1645,286L1641,316 M470,264L401,267L341,288L276,300 M18,817L21,866L12,912L4,979 M625,345L572,346L524,335L500,328L449,319 M1085,1197L1088,1149L1096,1089 M270,1269L260,1302 M406,855L355,821L306,793L245,770 M1780,1346L1739,1333L1691,1318L1668,1309L1647,1304 M1575,380L1640,386L1705,384L1733,387L1789,388 M822,567L820,498L825,445L836,391 M1216,775L1243,784L1284,802 M1891,762L1870,759L1848,754L1792,747L1725,754 M20,866L14,829L12,798 M577,1385L528,1346L489,1317L445,1263L420,1209 M1243,1056L1238,1086 M1593,1438L1604,1415L1621,1393 M1321,1484L1342,1421L1350,1376L1352,1356L1376,1300 M841,142L896,156L947,176 M1447,905L1396,889L1354,873L1313,865 M526,1006L582,1028L612,1052 M692,375L721,377L752,371L782,367 M491,338L542,372L587,387 M129,442L149,437 M210,1097L182,1082L147,1072L82,1056L29,1026 M1337,792L1334,760L1344,715L1345,690L1347,663 M521,801L560,801L611,810 M1620,747L1638,803L1646,855L1650,922 M700,106L720,67L730,35 M89,1522L45,1506L22,1502 M1668,932L1677,865L1675,814L1681,783L1687,729 M1522,196L1586,205L1654,202L1683,196 M1066,271L1057,322L1048,342L1038,360L1025,405 M654,26L624,24L585,15L518,15 M400,635L414,591L417,534 M1214,1446L1244,1445L1274,1441L1337,1428 M327,257L379,256L416,254L453,251 M70,977L10,971 M1863,801L1815,805L1792,807L1728,827L1686,840 M1792,1245L1737,1226L1691,1224 M1729,1240L1670,1214L1640,1205L1618,1195 M1220,619L1262,614L1293,601L1323,597 M409,808L361,792L301,777L265,775L209,788 M422,85L354,88L303,105L246,140L206,160 M1863,255L1857,228L1829,165L1819,121L1821,90 M1385,817L1362,862L1332,893L1315,921L1287,981 M346,865L339,799L329,750L319,723 M1953,1112L1994,1131L2016,1137 M700,394L744,407L788,420L855,434 M1672,1306L1718,1316L1762,1326L1796,1340L1819,1347 M1377,595L1339,573L1297,560L1269,553L1248,551 M1314,784L1316,762L1316,741L1318,690 M93,960L119,960L145,963L179,972L215,993" stroke-width="1.4" vector-effect="non-scaling-stroke"/><path d="M620,190 C620,228 630,345 620,420 C610,495 573,585 560,640 C547,695 543,732 540,750" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M330,420 C378,418 483,415 620,410 C757,405 1003,403 1150,390 C1297,377 1417,348 1500,330 C1583,312 1583,302 1650,280 C1717,258 1858,213 1900,200" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M630,500 C692,497 897,485 1000,480 C1103,475 1150,453 1250,470 C1350,487 1517,558 1600,580 C1683,602 1725,597 1750,600" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M560,620 C617,615 810,593 900,590 C990,587 1033,582 1100,600 C1167,618 1250,673 1300,700 C1350,727 1383,750 1400,760" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M550,650 C545,692 525,825 520,900 C515,975 513,1042 520,1100 C527,1158 568,1183 560,1250 C552,1317 485,1458 470,1500" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M870,240 C868,283 862,457 860,500" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1250,60 C1248,133 1257,383 1240,500 C1223,617 1173,693 1150,760 C1127,827 1125,852 1100,900 C1075,948 1017,1025 1000,1050" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1600,300 C1608,350 1633,500 1650,600 C1667,700 1692,850 1700,900" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1730,460 C1784,483 1998,577 2052,600" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M0,640 C55,637 237,623 330,620 C423,617 522,620 560,620" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M0,830 C50,852 207,917 300,960 C393,1003 517,1068 560,1090" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M560,1090 C600,1095 735,1118 800,1120 C865,1122 917,1112 950,1100 C983,1088 992,1058 1000,1050" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1000,1050 C1030,1033 1130,975 1180,950 C1230,925 1247,915 1300,900 C1353,885 1433,863 1500,860 C1567,857 1667,877 1700,880" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1600,860 C1633,867 1725,883 1800,900 C1875,917 2010,950 2052,960" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1350,1250 C1408,1253 1583,1263 1700,1270 C1817,1277 1993,1287 2052,1290" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1450,1522 C1492,1485 1658,1337 1700,1300" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M250,0 C263,42 305,180 330,250 C355,320 400,358 400,420 C400,482 342,587 330,620" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1010,0 C1010,42 990,180 1010,250 C1030,320 1110,392 1130,420" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1350,1522 C1355,1485 1368,1357 1380,1300 C1392,1243 1413,1200 1420,1180" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M0,1300 C25,1313 108,1343 150,1380 C192,1417 233,1498 250,1522" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M0,1098 C13,1106 50,1126 80,1148 C110,1170 143,1201 180,1228 C217,1255 260,1285 300,1308 C340,1331 377,1350 420,1368 C463,1386 503,1405 560,1418 C617,1431 700,1448 760,1448 C820,1448 870,1443 920,1418 C970,1393 1022,1335 1060,1298 C1098,1261 1122,1235 1150,1198 C1178,1161 1205,1111 1230,1078 C1255,1045 1263,1018 1300,998 C1337,978 1400,963 1450,958 C1500,953 1550,955 1600,968 C1650,981 1700,1011 1750,1038 C1800,1065 1850,1108 1900,1128 C1950,1148 2027,1153 2052,1158" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M300,1310 C317,1328 383,1402 400,1420" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1000,1440 C1008,1454 1042,1508 1050,1522" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1120,1290 C1140,1308 1220,1382 1240,1400" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1300,1010 C1314,1037 1371,1143 1385,1170" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1540,985 C1537,1010 1523,1110 1520,1135" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M1680,1050 C1678,1067 1668,1133 1665,1150" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M180,1240 C175,1250 155,1290 150,1300" stroke="#d3d3d3" stroke-width="6.5" vector-effect="non-scaling-stroke"/><path d="M620,190 C620,228 630,345 620,420 C610,495 573,585 560,640 C547,695 543,732 540,750" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M330,420 C378,418 483,415 620,410 C757,405 1003,403 1150,390 C1297,377 1417,348 1500,330 C1583,312 1583,302 1650,280 C1717,258 1858,213 1900,200" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M630,500 C692,497 897,485 1000,480 C1103,475 1150,453 1250,470 C1350,487 1517,558 1600,580 C1683,602 1725,597 1750,600" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M560,620 C617,615 810,593 900,590 C990,587 1033,582 1100,600 C1167,618 1250,673 1300,700 C1350,727 1383,750 1400,760" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M550,650 C545,692 525,825 520,900 C515,975 513,1042 520,1100 C527,1158 568,1183 560,1250 C552,1317 485,1458 470,1500" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M870,240 C868,283 862,457 860,500" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1250,60 C1248,133 1257,383 1240,500 C1223,617 1173,693 1150,760 C1127,827 1125,852 1100,900 C1075,948 1017,1025 1000,1050" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1600,300 C1608,350 1633,500 1650,600 C1667,700 1692,850 1700,900" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1730,460 C1784,483 1998,577 2052,600" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M0,640 C55,637 237,623 330,620 C423,617 522,620 560,620" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M0,830 C50,852 207,917 300,960 C393,1003 517,1068 560,1090" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M560,1090 C600,1095 735,1118 800,1120 C865,1122 917,1112 950,1100 C983,1088 992,1058 1000,1050" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1000,1050 C1030,1033 1130,975 1180,950 C1230,925 1247,915 1300,900 C1353,885 1433,863 1500,860 C1567,857 1667,877 1700,880" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1600,860 C1633,867 1725,883 1800,900 C1875,917 2010,950 2052,960" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1350,1250 C1408,1253 1583,1263 1700,1270 C1817,1277 1993,1287 2052,1290" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1450,1522 C1492,1485 1658,1337 1700,1300" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M250,0 C263,42 305,180 330,250 C355,320 400,358 400,420 C400,482 342,587 330,620" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1010,0 C1010,42 990,180 1010,250 C1030,320 1110,392 1130,420" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1350,1522 C1355,1485 1368,1357 1380,1300 C1392,1243 1413,1200 1420,1180" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M0,1300 C25,1313 108,1343 150,1380 C192,1417 233,1498 250,1522" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M0,1098 C13,1106 50,1126 80,1148 C110,1170 143,1201 180,1228 C217,1255 260,1285 300,1308 C340,1331 377,1350 420,1368 C463,1386 503,1405 560,1418 C617,1431 700,1448 760,1448 C820,1448 870,1443 920,1418 C970,1393 1022,1335 1060,1298 C1098,1261 1122,1235 1150,1198 C1178,1161 1205,1111 1230,1078 C1255,1045 1263,1018 1300,998 C1337,978 1400,963 1450,958 C1500,953 1550,955 1600,968 C1650,981 1700,1011 1750,1038 C1800,1065 1850,1108 1900,1128 C1950,1148 2027,1153 2052,1158" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M300,1310 C317,1328 383,1402 400,1420" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1000,1440 C1008,1454 1042,1508 1050,1522" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1120,1290 C1140,1308 1220,1382 1240,1400" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1300,1010 C1314,1037 1371,1143 1385,1170" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1540,985 C1537,1010 1523,1110 1520,1135" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M1680,1050 C1678,1067 1668,1133 1665,1150" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M180,1240 C175,1250 155,1290 150,1300" stroke-width="4.2" vector-effect="non-scaling-stroke"/><path d="M820,640 C837,677 890,803 920,860 C950,917 987,960 1000,980" stroke="#bdbdbd" stroke-width="3" vector-effect="non-scaling-stroke"/><path d="M1060,640 C1047,667 1007,750 980,800 C953,850 913,917 900,940" stroke="#bdbdbd" stroke-width="3" vector-effect="non-scaling-stroke"/></g><g fill="none" stroke="#a3a3a3" stroke-width="1.6" opacity=".75" stroke-linecap="round"><path d="M620,400 C610,440 573,573 560,640 C547,707 547,723 540,800 C533,877 543,1023 520,1100 C497,1177 453,1202 400,1260 C347,1318 233,1418 200,1450" vector-effect="non-scaling-stroke"/><path d="M0,690 C55,682 225,672 330,640 C435,608 518,527 630,500 C742,473 897,480 1000,480 C1103,480 1167,487 1250,500 C1333,513 1435,545 1500,560 C1565,575 1607,567 1640,590 C1673,613 1677,652 1700,700 C1723,748 1767,850 1780,880" vector-effect="non-scaling-stroke"/><path d="M60,0 C92,42 193,195 250,250 C307,305 338,322 400,330 C462,338 553,310 620,300 C687,290 758,227 800,270 C842,313 820,498 870,560 C920,622 1053,617 1100,640 C1147,663 1125,660 1150,700 C1175,740 1208,788 1250,880 C1292,972 1370,1143 1400,1250 C1430,1357 1425,1477 1430,1522" vector-effect="non-scaling-stroke"/><path d="M1010,80 C1012,108 1000,193 1020,250 C1040,307 1150,363 1130,420 C1110,477 972,558 900,590 C828,622 757,592 700,610 C643,628 587,635 560,700 C533,765 553,917 540,1000 C527,1083 492,1133 480,1200 C468,1267 472,1367 470,1400" vector-effect="non-scaling-stroke"/><path d="M330,500 C355,487 425,440 480,420 C535,400 582,387 660,380 C738,373 900,360 950,380 C1000,400 918,463 960,500 C1002,537 1143,563 1200,600 C1257,637 1250,713 1300,720 C1350,727 1425,687 1500,640 C1575,593 1658,447 1750,440 C1842,433 2002,573 2052,600" vector-effect="non-scaling-stroke"/><path d="M0,840 C42,860 157,918 250,960 C343,1002 468,1062 560,1090 C652,1118 735,1128 800,1130 C865,1132 915,1125 950,1100 C985,1075 997,1018 1010,980 C1023,942 1010,907 1030,870 C1050,833 1097,822 1130,760 C1163,698 1212,593 1230,500 C1248,407 1220,270 1240,200 C1260,130 1298,113 1350,80 C1402,47 1517,13 1550,0" vector-effect="non-scaling-stroke"/><path d="M1580,600 C1592,587 1610,577 1650,520 C1690,463 1778,347 1820,260 C1862,173 1887,43 1900,0" vector-effect="non-scaling-stroke"/></g></svg>`;
+// 자세한 남산 지도
+const BASE_MAP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2052 1548" preserveAspectRatio="none"><rect width="2052" height="1548" fill="#f1f1f0"/><path d="M0,0L150,0L140,600L120,1000L95,1548L0,1548Z" fill="#e6e6e6"/><path d="M45,0 L30,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M65,0 L50,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M85,0 L70,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M105,0 L90,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M125,0 L110,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M145,0 L130,1548" stroke="#d2d2d2" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="M740,440L790,330L880,300L1000,240L1150,230L1300,150L1380,90L1560,80L1600,120L1580,250L1640,330L1760,420L1880,470L1900,560L1820,620L1800,700L1860,800L1920,900L1990,980L2000,1100L1980,1250L1920,1380L1870,1430L1750,1420L1600,1380L1450,1330L1300,1260L1260,1180L1200,1080L1100,1050L950,1030L900,980L860,900L840,820L820,720L790,640L760,560L740,500Z" fill="#dfe5dd"/><path d="M430,320L560,300L700,390L740,440L700,480L600,470L520,430L450,380Z" fill="#dfe5dd"/><rect x="620" y="1120" width="90" height="60" rx="6" fill="#e3e6e1"/><rect x="1830" y="240" width="80" height="60" rx="6" fill="#e3e6e1"/><rect x="390" y="930" width="70" height="50" rx="6" fill="#e3e6e1"/><g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round"><path d="M380,635L439,625L501,592 M455,595L550,606L597,615 M804,849L817,817L823,764 M715,650L688,720L661,785 M689,793L727,707L749,663 M656,704L699,706L804,705 M539,955L466,930L410,894L320,839L239,820 M637,884L651,784L654,678L656,599L651,552 M783,808L731,894L693,986L675,1046L617,1129 M263,648L230,709L223,759 M445,745L400,695L340,608 M540,759L535,724L517,681L480,638L456,620L423,601 M177,997L203,894L202,826L223,760L235,693 M258,935L187,925 M629,1017L551,982L493,971 M685,826L609,770L529,731L462,707 M464,1029L429,1018L363,1005L303,971L226,957 M670,799L648,829L599,901L571,986L545,1020 M179,855L221,789L273,745L307,719 M175,960L227,997L315,1037L363,1050 M324,853L294,835L213,773L138,715 M722,999L670,1084L616,1141 M262,631L340,664L397,702L493,730L539,728 M226,786L282,821L341,859 M631,786L681,716L726,621 M731,629L767,633 M693,1009L662,1036L598,1122L541,1212L486,1254 M726,641L747,588 M173,837L202,788L219,719L264,621L281,514L273,464 M690,695L658,749L622,810L601,863L587,955 M769,694L798,717L819,745 M536,1023L466,1007L427,1007 M194,661L146,639 M172,685L243,680L309,683L390,695 M531,1004L486,968L424,908L375,870 M197,625L261,631L344,633L411,657L480,693 M183,1001L184,1058L179,1110 M329,948L369,960L429,969 M588,602L538,678L509,742L495,820L463,910L443,979 M637,813L673,820L743,860L797,887 M195,569L192,636L159,735 M223,823L226,725L213,636 M602,790L622,701L616,620L605,579L572,496 M546,566L622,605L670,629 M476,793L528,810L595,821L631,826 M836,1057L833,1021L811,934L801,876 M590,700L642,746L697,774L784,834 M436,924L442,884L444,828L465,770L465,725 M663,687L720,701L772,697 M229,977L181,965 M414,1038L485,1113L527,1174L541,1205L558,1268L591,1343 M193,1023L191,1081L158,1164L134,1209 M428,644L420,717L405,772L384,833L380,882L383,956 M410,965L371,1010L346,1050L299,1127L265,1195L226,1271 M697,984L755,1004L818,1018L900,1066 M247,773L261,746L331,669L417,622L453,586L483,557 M624,1031L620,1001L588,933 M646,1041L561,1033L525,1029L449,1027L401,1022L370,1023 M473,1039L473,1113L466,1176L469,1210 M183,729L205,689L247,610L281,578L328,551L365,519 M1195,1204L1238,1151 M870,1351L874,1306L871,1219 M910,1099L887,1178L877,1244L844,1326 M1293,1276L1330,1278 M1194,1246L1165,1223L1129,1194L1073,1159L997,1113L922,1084 M1135,1258L1117,1165L1096,1125 M1126,1237L1089,1203L1042,1173 M862,1429L899,1439L959,1468L1028,1532 M1127,1220L1059,1202L1017,1194 M1146,1295L1059,1245L1009,1233L972,1225L887,1208L838,1201 M1133,1389L1179,1416L1225,1455L1264,1478L1312,1492 M1249,1342L1141,1327L1095,1310L1032,1258L1002,1234 M1220,1470L1173,1480L1095,1477L1051,1489L988,1522 M1125,1438L1173,1441L1214,1435L1264,1431L1343,1408 M865,1220L829,1225L760,1235L698,1231L616,1246 M1095,1379L1153,1287L1169,1225L1213,1147 M1197,1451L1200,1498 M1221,1258L1181,1258L1140,1248L1081,1231 M1268,1420L1270,1463L1275,1498 M1214,1207L1258,1241 M1173,1396L1135,1466L1114,1506 M1018,1133L1018,1216L1020,1278 M1234,1440L1256,1380L1277,1317L1290,1288 M1075,1175L1089,1114L1096,1056 M1149,1080L1135,1171L1130,1205L1103,1259L1076,1290 M1298,1417L1347,1439L1427,1487L1509,1517 M971,1218L936,1196L838,1161L791,1143L735,1141L691,1151 M1272,1392L1280,1353L1289,1273 M1115,1491L1203,1503L1263,1505L1305,1502L1340,1493L1419,1497 M990,1312L917,1262L874,1242L800,1211L741,1207 M1075,1359L1150,1357L1222,1357 M1042,1207L1048,1249L1047,1343L1067,1406L1074,1447L1072,1499 M1221,1496L1253,1457L1274,1431L1305,1377L1328,1351L1349,1328 M948,1357L962,1287L1003,1219L1048,1143 M1097,1243L1117,1213L1152,1186L1196,1160L1234,1149 M976,1086L1012,1046 M764,51L696,132L650,164L611,205 M984,200L1013,105L1042,22 M526,64L568,66L604,79L661,85 M194,12L225,30L269,69 M238,260L230,215L243,110L227,21 M1054,190L1077,99L1085,46 M471,105L373,74L298,51L251,27L159,14 M844,86L858,35L864,1 M865,287L813,277L729,261L692,250 M256,236L285,261L349,339L384,393L423,438 M669,163L666,269L654,345 M852,157L869,116L908,33 M1213,71L1166,146L1114,216 M1297,78L1343,75L1384,66 M514,82L554,115L618,138 M1177,131L1170,198 M672,172L721,104L752,45 M659,235L667,303 M947,262L878,194L846,173L811,140L720,85L679,45 M1288,63L1256,145 M614,18L687,52L763,64L817,69L914,112L995,186 M710,49L768,85L798,121L831,169 M717,88L678,132L647,173L619,214L608,258 M452,91L472,10 M228,248L161,221 M381,136L384,229L379,330L364,421L327,516L312,612 M984,159L1004,88L1005,39 M874,220L831,295 M667,300L747,289L826,288L929,274 M737,269L816,277L915,277 M509,248L524,150L531,104L529,65 M1318,26L1391,25L1442,6L1487,3L1565,6L1654,37 M888,185L968,183L1049,203L1112,200L1209,161L1289,102 M528,213L473,205L400,170 M225,170L278,225L336,255L389,285 M726,124L773,119L801,105L865,50 M1195,39L1255,65L1354,97 M332,228L282,184L257,140L190,84L168,62 M530,219L496,290L435,377L411,439L399,546L413,652 M1114,143L1128,92 M1145,100L1195,157 M479,47L562,93L634,118L717,170 M235,119L178,81 M375,210L318,186L276,183L166,183 M1097,47L1134,49L1233,60 M858,64L780,17 M205,60L194,93L165,188 M236,179L265,138L330,89 M957,118L1039,49L1064,8 M397,224L422,162L441,103 M1921,110L1932,210L1958,271L1974,374L1989,453 M1761,101L1766,151L1784,224L1821,311L1838,346L1881,399 M1914,648L1929,599L1965,552 M1874,205L1942,225L2019,277 M1950,365L1900,426 M1896,123L1881,198L1869,231L1838,285 M1964,345L2001,362L2045,384 M1858,402L1965,400L2023,388 M1908,608L2011,633 M1750,14L1794,18L1862,47L1886,67 M1882,183L1904,152L1930,68L1941,30 M1789,422L1880,439L1929,442 M1924,639L1940,585L1954,502 M1968,464L2002,472 M1906,656L1933,674L1972,709 M2003,435L1945,405L1895,388 M1822,84L1758,74L1667,31L1593,10 M1853,155L1868,90L1885,13 M1962,167L1863,152L1829,159L1755,167L1697,167 M1842,654L1844,613 M1947,67L1944,4 M2047,105L1994,76L1942,35 M1762,269L1702,271L1630,259 M1796,170L1709,119L1679,108L1579,87L1506,81L1427,79 M1938,509L1952,479L1957,413L1953,377L1946,315 M2038,578L2006,657L1940,744L1915,803L1893,851 M1729,132L1703,183L1690,263 M1949,410L2038,433 M1735,101L1722,140L1723,211 M1720,327L1768,261L1797,190 M1960,663L2040,658 M1898,31L1945,39L2022,35 M1697,293L1593,263 M1781,289L1804,267L1824,236L1837,177L1851,78L1853,18 M1623,109L1598,178 M1918,168L1869,134L1840,97L1787,51L1728,21 M1987,411L1909,398L1810,408 M1770,218L1794,129L1818,90L1844,66 M1925,531L1926,568L1934,663L1925,721L1909,786 M2011,123L1910,113L1824,106L1714,104L1615,132 M269,1420L196,1404L128,1387 M570,1400L548,1490 M220,1399L236,1349L263,1247L303,1150 M677,1465L700,1405L710,1301L691,1212 M652,1453L549,1423L476,1415L441,1415 M448,1158L365,1160L315,1160L253,1140L195,1131 M554,1223L638,1234L739,1273L800,1283 M643,1066L650,965L647,926 M834,1139L853,1089L865,1058 M683,1222L578,1206L485,1204L428,1220L376,1229L288,1234 M617,1098L714,1095L759,1098L850,1133L887,1156L959,1221 M389,1150L354,1129L264,1092L229,1089L143,1052 M860,1257L907,1300L983,1379L1051,1421L1097,1435L1176,1454 M845,1475L858,1448L916,1368L946,1312L985,1239 M455,1225L441,1124L432,1071L412,999 M297,1102L211,1037L155,955 M728,1089L657,1064L604,1037L573,1010L523,958 M754,1169L782,1091L805,1018L829,950 M437,1116L415,1186L401,1284L395,1321 M336,1299L379,1221L430,1165 M636,1451L575,1503 M640,1326L618,1360L605,1392 M421,1067L397,1151L361,1245 M770,1335L682,1302L651,1297L603,1288L531,1282 M502,1458L409,1470L305,1470L255,1480L190,1479 M567,1115L660,1127L735,1125 M641,1246L604,1309L534,1372L513,1395L485,1427 M771,1451L858,1494L936,1530 M522,1236L527,1313L534,1356L541,1423 M432,1233L488,1229L552,1247L586,1248L669,1236L720,1229 M343,1338L264,1404L241,1433 M458,1339L551,1348L644,1334L679,1340L736,1344 M757,1180L800,1108L847,1028 M858,1134L856,1196L826,1283L820,1359L828,1447L826,1522 M836,1096L817,1170L803,1227 M839,1397L935,1433L985,1434L1028,1429L1110,1401 M440,1158L405,1128L327,1054 M216,1455L176,1434 M806,1164L733,1127L654,1097 M200,1262L282,1305L325,1349L415,1394L461,1424 M379,1263L337,1266L251,1298 M730,1267L706,1309L661,1392L643,1419L594,1486 M654,1333L614,1332L546,1324L455,1321L347,1338 M690,1104L721,1118L795,1132 M818,1238L787,1304L752,1383L732,1480 M799,1500L798,1407L771,1328L766,1234L753,1151 M320,1243L327,1212L332,1125L328,1067 M458,1196L491,1137L559,1075L585,1043 M222,1062L228,1108L218,1200L236,1287L258,1377L289,1433 M815,1394L856,1396L926,1391 M686,1287L707,1208L716,1147L736,1047L750,1003 M171,1126L165,1214L188,1313 M264,1420L370,1428L472,1461L579,1474L614,1484L645,1487 M836,1156L887,1165L920,1170L972,1172L1031,1195 M682,1191L683,1130L708,1043L758,963L788,888L834,835 M646,1416L625,1447L603,1471 M444,1333L472,1272L506,1214L534,1152L558,1082 M737,1446L755,1387L788,1315 M385,1367L349,1402L286,1478L234,1535 M690,1238L684,1286L673,1382L647,1458L590,1542 M190,1246L197,1160L208,1102L211,1030 M624,1194L569,1158L501,1093 M265,1392L190,1364 M1458,1446L1359,1417L1309,1405L1240,1388L1202,1388 M2019,1372L1960,1358 M1596,1451L1498,1449L1423,1422L1333,1383L1299,1376L1200,1385 M2000,1474L2000,1430L1985,1370 M1436,1350L1491,1400L1572,1443L1619,1452L1714,1443 M1321,1487L1331,1401L1339,1367L1358,1307 M2043,1368L1996,1349 M1494,1515L1509,1463L1526,1419 M1996,1385L2015,1298L2033,1268 M1426,1409L1390,1460L1372,1503L1345,1538 M1956,1502L1977,1435L1991,1353L2010,1310 M2013,1403L1930,1385 M1283,1507L1214,1456L1165,1432L1093,1412L995,1373 M1435,1542L1390,1526L1354,1515L1268,1494L1184,1496 M1321,1335L1249,1309L1173,1304L1143,1309 M1372,1374L1362,1442L1370,1501 M1379,1398L1440,1413L1496,1443 M1311,1480L1283,1530 M1370,1323L1360,1374L1359,1430L1383,1502 M1477,1438L1456,1537 M1884,1441L1885,1484L1889,1516 M1964,1321L1972,1416L1992,1470 M1422,1492L1399,1520 M1505,1531L1510,1489L1524,1448 M1992,1470L2019,1489 M2032,648L1976,588L1937,522 M1975,1332L2009,1235 M2025,1344L1998,1322 M1937,805L1997,815L2039,813 M2034,1511L1957,1449L1899,1429 M2000,1298L2029,1327 M1978,914L1937,878L1894,805 M2014,1445L1999,1378 M1929,1470L1997,1528 M1953,733L2028,771 M2018,941L2013,987L2024,1051L2036,1100L2030,1161L2037,1212 M2038,1027L2047,994" stroke="#dcdcdc" stroke-width="3.2" vector-effect="non-scaling-stroke"/><path d="M380,635L439,625L501,592 M455,595L550,606L597,615 M804,849L817,817L823,764 M715,650L688,720L661,785 M689,793L727,707L749,663 M656,704L699,706L804,705 M539,955L466,930L410,894L320,839L239,820 M637,884L651,784L654,678L656,599L651,552 M783,808L731,894L693,986L675,1046L617,1129 M263,648L230,709L223,759 M445,745L400,695L340,608 M540,759L535,724L517,681L480,638L456,620L423,601 M177,997L203,894L202,826L223,760L235,693 M258,935L187,925 M629,1017L551,982L493,971 M685,826L609,770L529,731L462,707 M464,1029L429,1018L363,1005L303,971L226,957 M670,799L648,829L599,901L571,986L545,1020 M179,855L221,789L273,745L307,719 M175,960L227,997L315,1037L363,1050 M324,853L294,835L213,773L138,715 M722,999L670,1084L616,1141 M262,631L340,664L397,702L493,730L539,728 M226,786L282,821L341,859 M631,786L681,716L726,621 M731,629L767,633 M693,1009L662,1036L598,1122L541,1212L486,1254 M726,641L747,588 M173,837L202,788L219,719L264,621L281,514L273,464 M690,695L658,749L622,810L601,863L587,955 M769,694L798,717L819,745 M536,1023L466,1007L427,1007 M194,661L146,639 M172,685L243,680L309,683L390,695 M531,1004L486,968L424,908L375,870 M197,625L261,631L344,633L411,657L480,693 M183,1001L184,1058L179,1110 M329,948L369,960L429,969 M588,602L538,678L509,742L495,820L463,910L443,979 M637,813L673,820L743,860L797,887 M195,569L192,636L159,735 M223,823L226,725L213,636 M602,790L622,701L616,620L605,579L572,496 M546,566L622,605L670,629 M476,793L528,810L595,821L631,826 M836,1057L833,1021L811,934L801,876 M590,700L642,746L697,774L784,834 M436,924L442,884L444,828L465,770L465,725 M663,687L720,701L772,697 M229,977L181,965 M414,1038L485,1113L527,1174L541,1205L558,1268L591,1343 M193,1023L191,1081L158,1164L134,1209 M428,644L420,717L405,772L384,833L380,882L383,956 M410,965L371,1010L346,1050L299,1127L265,1195L226,1271 M697,984L755,1004L818,1018L900,1066 M247,773L261,746L331,669L417,622L453,586L483,557 M624,1031L620,1001L588,933 M646,1041L561,1033L525,1029L449,1027L401,1022L370,1023 M473,1039L473,1113L466,1176L469,1210 M183,729L205,689L247,610L281,578L328,551L365,519 M1195,1204L1238,1151 M870,1351L874,1306L871,1219 M910,1099L887,1178L877,1244L844,1326 M1293,1276L1330,1278 M1194,1246L1165,1223L1129,1194L1073,1159L997,1113L922,1084 M1135,1258L1117,1165L1096,1125 M1126,1237L1089,1203L1042,1173 M862,1429L899,1439L959,1468L1028,1532 M1127,1220L1059,1202L1017,1194 M1146,1295L1059,1245L1009,1233L972,1225L887,1208L838,1201 M1133,1389L1179,1416L1225,1455L1264,1478L1312,1492 M1249,1342L1141,1327L1095,1310L1032,1258L1002,1234 M1220,1470L1173,1480L1095,1477L1051,1489L988,1522 M1125,1438L1173,1441L1214,1435L1264,1431L1343,1408 M865,1220L829,1225L760,1235L698,1231L616,1246 M1095,1379L1153,1287L1169,1225L1213,1147 M1197,1451L1200,1498 M1221,1258L1181,1258L1140,1248L1081,1231 M1268,1420L1270,1463L1275,1498 M1214,1207L1258,1241 M1173,1396L1135,1466L1114,1506 M1018,1133L1018,1216L1020,1278 M1234,1440L1256,1380L1277,1317L1290,1288 M1075,1175L1089,1114L1096,1056 M1149,1080L1135,1171L1130,1205L1103,1259L1076,1290 M1298,1417L1347,1439L1427,1487L1509,1517 M971,1218L936,1196L838,1161L791,1143L735,1141L691,1151 M1272,1392L1280,1353L1289,1273 M1115,1491L1203,1503L1263,1505L1305,1502L1340,1493L1419,1497 M990,1312L917,1262L874,1242L800,1211L741,1207 M1075,1359L1150,1357L1222,1357 M1042,1207L1048,1249L1047,1343L1067,1406L1074,1447L1072,1499 M1221,1496L1253,1457L1274,1431L1305,1377L1328,1351L1349,1328 M948,1357L962,1287L1003,1219L1048,1143 M1097,1243L1117,1213L1152,1186L1196,1160L1234,1149 M976,1086L1012,1046 M764,51L696,132L650,164L611,205 M984,200L1013,105L1042,22 M526,64L568,66L604,79L661,85 M194,12L225,30L269,69 M238,260L230,215L243,110L227,21 M1054,190L1077,99L1085,46 M471,105L373,74L298,51L251,27L159,14 M844,86L858,35L864,1 M865,287L813,277L729,261L692,250 M256,236L285,261L349,339L384,393L423,438 M669,163L666,269L654,345 M852,157L869,116L908,33 M1213,71L1166,146L1114,216 M1297,78L1343,75L1384,66 M514,82L554,115L618,138 M1177,131L1170,198 M672,172L721,104L752,45 M659,235L667,303 M947,262L878,194L846,173L811,140L720,85L679,45 M1288,63L1256,145 M614,18L687,52L763,64L817,69L914,112L995,186 M710,49L768,85L798,121L831,169 M717,88L678,132L647,173L619,214L608,258 M452,91L472,10 M228,248L161,221 M381,136L384,229L379,330L364,421L327,516L312,612 M984,159L1004,88L1005,39 M874,220L831,295 M667,300L747,289L826,288L929,274 M737,269L816,277L915,277 M509,248L524,150L531,104L529,65 M1318,26L1391,25L1442,6L1487,3L1565,6L1654,37 M888,185L968,183L1049,203L1112,200L1209,161L1289,102 M528,213L473,205L400,170 M225,170L278,225L336,255L389,285 M726,124L773,119L801,105L865,50 M1195,39L1255,65L1354,97 M332,228L282,184L257,140L190,84L168,62 M530,219L496,290L435,377L411,439L399,546L413,652 M1114,143L1128,92 M1145,100L1195,157 M479,47L562,93L634,118L717,170 M235,119L178,81 M375,210L318,186L276,183L166,183 M1097,47L1134,49L1233,60 M858,64L780,17 M205,60L194,93L165,188 M236,179L265,138L330,89 M957,118L1039,49L1064,8 M397,224L422,162L441,103 M1921,110L1932,210L1958,271L1974,374L1989,453 M1761,101L1766,151L1784,224L1821,311L1838,346L1881,399 M1914,648L1929,599L1965,552 M1874,205L1942,225L2019,277 M1950,365L1900,426 M1896,123L1881,198L1869,231L1838,285 M1964,345L2001,362L2045,384 M1858,402L1965,400L2023,388 M1908,608L2011,633 M1750,14L1794,18L1862,47L1886,67 M1882,183L1904,152L1930,68L1941,30 M1789,422L1880,439L1929,442 M1924,639L1940,585L1954,502 M1968,464L2002,472 M1906,656L1933,674L1972,709 M2003,435L1945,405L1895,388 M1822,84L1758,74L1667,31L1593,10 M1853,155L1868,90L1885,13 M1962,167L1863,152L1829,159L1755,167L1697,167 M1842,654L1844,613 M1947,67L1944,4 M2047,105L1994,76L1942,35 M1762,269L1702,271L1630,259 M1796,170L1709,119L1679,108L1579,87L1506,81L1427,79 M1938,509L1952,479L1957,413L1953,377L1946,315 M2038,578L2006,657L1940,744L1915,803L1893,851 M1729,132L1703,183L1690,263 M1949,410L2038,433 M1735,101L1722,140L1723,211 M1720,327L1768,261L1797,190 M1960,663L2040,658 M1898,31L1945,39L2022,35 M1697,293L1593,263 M1781,289L1804,267L1824,236L1837,177L1851,78L1853,18 M1623,109L1598,178 M1918,168L1869,134L1840,97L1787,51L1728,21 M1987,411L1909,398L1810,408 M1770,218L1794,129L1818,90L1844,66 M1925,531L1926,568L1934,663L1925,721L1909,786 M2011,123L1910,113L1824,106L1714,104L1615,132 M269,1420L196,1404L128,1387 M570,1400L548,1490 M220,1399L236,1349L263,1247L303,1150 M677,1465L700,1405L710,1301L691,1212 M652,1453L549,1423L476,1415L441,1415 M448,1158L365,1160L315,1160L253,1140L195,1131 M554,1223L638,1234L739,1273L800,1283 M643,1066L650,965L647,926 M834,1139L853,1089L865,1058 M683,1222L578,1206L485,1204L428,1220L376,1229L288,1234 M617,1098L714,1095L759,1098L850,1133L887,1156L959,1221 M389,1150L354,1129L264,1092L229,1089L143,1052 M860,1257L907,1300L983,1379L1051,1421L1097,1435L1176,1454 M845,1475L858,1448L916,1368L946,1312L985,1239 M455,1225L441,1124L432,1071L412,999 M297,1102L211,1037L155,955 M728,1089L657,1064L604,1037L573,1010L523,958 M754,1169L782,1091L805,1018L829,950 M437,1116L415,1186L401,1284L395,1321 M336,1299L379,1221L430,1165 M636,1451L575,1503 M640,1326L618,1360L605,1392 M421,1067L397,1151L361,1245 M770,1335L682,1302L651,1297L603,1288L531,1282 M502,1458L409,1470L305,1470L255,1480L190,1479 M567,1115L660,1127L735,1125 M641,1246L604,1309L534,1372L513,1395L485,1427 M771,1451L858,1494L936,1530 M522,1236L527,1313L534,1356L541,1423 M432,1233L488,1229L552,1247L586,1248L669,1236L720,1229 M343,1338L264,1404L241,1433 M458,1339L551,1348L644,1334L679,1340L736,1344 M757,1180L800,1108L847,1028 M858,1134L856,1196L826,1283L820,1359L828,1447L826,1522 M836,1096L817,1170L803,1227 M839,1397L935,1433L985,1434L1028,1429L1110,1401 M440,1158L405,1128L327,1054 M216,1455L176,1434 M806,1164L733,1127L654,1097 M200,1262L282,1305L325,1349L415,1394L461,1424 M379,1263L337,1266L251,1298 M730,1267L706,1309L661,1392L643,1419L594,1486 M654,1333L614,1332L546,1324L455,1321L347,1338 M690,1104L721,1118L795,1132 M818,1238L787,1304L752,1383L732,1480 M799,1500L798,1407L771,1328L766,1234L753,1151 M320,1243L327,1212L332,1125L328,1067 M458,1196L491,1137L559,1075L585,1043 M222,1062L228,1108L218,1200L236,1287L258,1377L289,1433 M815,1394L856,1396L926,1391 M686,1287L707,1208L716,1147L736,1047L750,1003 M171,1126L165,1214L188,1313 M264,1420L370,1428L472,1461L579,1474L614,1484L645,1487 M836,1156L887,1165L920,1170L972,1172L1031,1195 M682,1191L683,1130L708,1043L758,963L788,888L834,835 M646,1416L625,1447L603,1471 M444,1333L472,1272L506,1214L534,1152L558,1082 M737,1446L755,1387L788,1315 M385,1367L349,1402L286,1478L234,1535 M690,1238L684,1286L673,1382L647,1458L590,1542 M190,1246L197,1160L208,1102L211,1030 M624,1194L569,1158L501,1093 M265,1392L190,1364 M1458,1446L1359,1417L1309,1405L1240,1388L1202,1388 M2019,1372L1960,1358 M1596,1451L1498,1449L1423,1422L1333,1383L1299,1376L1200,1385 M2000,1474L2000,1430L1985,1370 M1436,1350L1491,1400L1572,1443L1619,1452L1714,1443 M1321,1487L1331,1401L1339,1367L1358,1307 M2043,1368L1996,1349 M1494,1515L1509,1463L1526,1419 M1996,1385L2015,1298L2033,1268 M1426,1409L1390,1460L1372,1503L1345,1538 M1956,1502L1977,1435L1991,1353L2010,1310 M2013,1403L1930,1385 M1283,1507L1214,1456L1165,1432L1093,1412L995,1373 M1435,1542L1390,1526L1354,1515L1268,1494L1184,1496 M1321,1335L1249,1309L1173,1304L1143,1309 M1372,1374L1362,1442L1370,1501 M1379,1398L1440,1413L1496,1443 M1311,1480L1283,1530 M1370,1323L1360,1374L1359,1430L1383,1502 M1477,1438L1456,1537 M1884,1441L1885,1484L1889,1516 M1964,1321L1972,1416L1992,1470 M1422,1492L1399,1520 M1505,1531L1510,1489L1524,1448 M1992,1470L2019,1489 M2032,648L1976,588L1937,522 M1975,1332L2009,1235 M2025,1344L1998,1322 M1937,805L1997,815L2039,813 M2034,1511L1957,1449L1899,1429 M2000,1298L2029,1327 M1978,914L1937,878L1894,805 M2014,1445L1999,1378 M1929,1470L1997,1528 M1953,733L2028,771 M2018,941L2013,987L2024,1051L2036,1100L2030,1161L2037,1212 M2038,1027L2047,994" stroke-width="1.8" vector-effect="non-scaling-stroke"/><path d="M215,230 C212,275 203,405 195,500 C187,595 176,717 168,800 C160,883 149,917 150,1000 C151,1083 162,1209 175,1300 C188,1391 217,1507 225,1548" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M150,330 C175,315 247,267 300,240 C353,213 417,193 470,170 C523,147 568,122 620,100 C672,78 740,57 780,40 C820,23 847,7 860,0" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M380,40 C387,67 405,157 420,200 C435,243 447,263 470,300 C493,337 530,392 560,420 C590,448 623,453 650,470 C677,487 697,492 720,520 C743,548 770,600 790,640 C810,680 827,717 840,760 C853,803 853,857 870,900 C887,943 902,995 940,1020 C978,1045 1050,1035 1100,1050 C1150,1065 1203,1082 1240,1110 C1277,1138 1280,1178 1320,1220 C1360,1262 1417,1323 1480,1360 C1543,1397 1605,1433 1700,1440 C1795,1447 1993,1407 2052,1400" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M440,330 C444,392 452,605 465,700 C478,795 502,833 520,900 C538,967 558,992 570,1100 C582,1208 587,1473 590,1548" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M720,600 C726,633 743,733 755,800 C767,867 779,957 790,1000 C801,1043 815,1050 820,1060" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M60,1170 C117,1159 293,1122 400,1105 C507,1088 610,1077 700,1065 C790,1053 900,1040 940,1035" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M420,310 C443,308 513,292 560,300 C607,308 662,340 700,360 C738,380 775,410 790,420" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M1290,0 C1303,32 1347,128 1370,190 C1393,252 1382,268 1430,370 C1478,472 1582,645 1660,800 C1738,955 1850,1175 1900,1300 C1950,1425 1950,1507 1960,1548" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M1560,0 C1565,33 1577,145 1590,200 C1603,255 1632,308 1640,330" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M1820,700 C1823,725 1818,808 1840,850 C1862,892 1915,925 1950,950 C1985,975 2035,992 2052,1000" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M1880,620 C1898,597 1961,512 1990,480 C2019,448 2042,438 2052,430" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M1450,1548 C1467,1533 1508,1477 1550,1460 C1592,1443 1675,1448 1700,1445" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M940,1035 C950,1046 980,1072 1000,1100 C1020,1128 1043,1158 1060,1200 C1077,1242 1097,1292 1100,1350 C1103,1408 1083,1515 1080,1548" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M820,0 C822,25 830,100 830,150 C830,200 822,275 820,300" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M380,40 C410,38 497,30 560,30 C623,30 727,38 760,40" stroke="#d3d3d3" stroke-width="8" vector-effect="non-scaling-stroke"/><path d="M215,230 C212,275 203,405 195,500 C187,595 176,717 168,800 C160,883 149,917 150,1000 C151,1083 162,1209 175,1300 C188,1391 217,1507 225,1548" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M150,330 C175,315 247,267 300,240 C353,213 417,193 470,170 C523,147 568,122 620,100 C672,78 740,57 780,40 C820,23 847,7 860,0" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M380,40 C387,67 405,157 420,200 C435,243 447,263 470,300 C493,337 530,392 560,420 C590,448 623,453 650,470 C677,487 697,492 720,520 C743,548 770,600 790,640 C810,680 827,717 840,760 C853,803 853,857 870,900 C887,943 902,995 940,1020 C978,1045 1050,1035 1100,1050 C1150,1065 1203,1082 1240,1110 C1277,1138 1280,1178 1320,1220 C1360,1262 1417,1323 1480,1360 C1543,1397 1605,1433 1700,1440 C1795,1447 1993,1407 2052,1400" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M440,330 C444,392 452,605 465,700 C478,795 502,833 520,900 C538,967 558,992 570,1100 C582,1208 587,1473 590,1548" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M720,600 C726,633 743,733 755,800 C767,867 779,957 790,1000 C801,1043 815,1050 820,1060" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M60,1170 C117,1159 293,1122 400,1105 C507,1088 610,1077 700,1065 C790,1053 900,1040 940,1035" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M420,310 C443,308 513,292 560,300 C607,308 662,340 700,360 C738,380 775,410 790,420" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M1290,0 C1303,32 1347,128 1370,190 C1393,252 1382,268 1430,370 C1478,472 1582,645 1660,800 C1738,955 1850,1175 1900,1300 C1950,1425 1950,1507 1960,1548" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M1560,0 C1565,33 1577,145 1590,200 C1603,255 1632,308 1640,330" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M1820,700 C1823,725 1818,808 1840,850 C1862,892 1915,925 1950,950 C1985,975 2035,992 2052,1000" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M1880,620 C1898,597 1961,512 1990,480 C2019,448 2042,438 2052,430" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M1450,1548 C1467,1533 1508,1477 1550,1460 C1592,1443 1675,1448 1700,1445" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M940,1035 C950,1046 980,1072 1000,1100 C1020,1128 1043,1158 1060,1200 C1077,1242 1097,1292 1100,1350 C1103,1408 1083,1515 1080,1548" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M820,0 C822,25 830,100 830,150 C830,200 822,275 820,300" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M380,40 C410,38 497,30 560,30 C623,30 727,38 760,40" stroke-width="5.5" vector-effect="non-scaling-stroke"/><path d="M815,300 C865,447 1076,972 1115,1180 C1154,1388 1061,1487 1050,1548" stroke="#b9b9b9" stroke-width="5" stroke-dasharray="1 0" vector-effect="non-scaling-stroke"/><path d="M815,300 C865,447 1076,972 1115,1180 C1154,1388 1061,1487 1050,1548" stroke="#ececec" stroke-width="2.5" vector-effect="non-scaling-stroke"/><path d="M1250,1150 C1308,1088 1483,910 1600,780 C1717,650 1875,445 1950,370 C2025,295 2035,337 2052,330" stroke="#b9b9b9" stroke-width="5" stroke-dasharray="1 0" vector-effect="non-scaling-stroke"/><path d="M1250,1150 C1308,1088 1483,910 1600,780 C1717,650 1875,445 1950,370 C2025,295 2035,337 2052,330" stroke="#ececec" stroke-width="2.5" vector-effect="non-scaling-stroke"/></g><g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M720,0 C693,15 630,52 560,90 C490,128 360,195 300,230 C240,265 219,222 200,300 C181,378 192,567 185,700 C178,833 152,959 160,1100 C168,1241 218,1473 230,1548" stroke="#9c9c9c" stroke-width="2" vector-effect="non-scaling-stroke" opacity=".8"/><path d="M330,0 C306,38 214,147 185,230 C156,313 166,405 155,500 C144,595 127,625 118,800 C109,975 105,1423 102,1548" stroke="#9c9c9c" stroke-width="2" vector-effect="non-scaling-stroke" opacity=".8"/><path d="M1650,0 C1717,13 1985,67 2052,80" stroke="#9c9c9c" stroke-width="2" vector-effect="non-scaling-stroke" opacity=".8"/><path d="M2052,950 C2038,992 1983,1100 1965,1200 C1947,1300 1948,1490 1945,1548" stroke="#9c9c9c" stroke-width="2" vector-effect="non-scaling-stroke" opacity=".8"/></g></svg>`;
+
+const WIDE_AREAS = [
+  ['Hyehwa-dong', 37.58577, 127.00154],
+  ['Sajik-dong', 37.57364, 126.9655],
+  ['Changsin-dong', 37.57364, 127.01239],
+  ['Sungin-dong', 37.57388, 127.01909],
+  ['Jongno', 37.56742, 126.98559],
+  ['Euljiro', 37.56434, 126.98559],
+  ['Jung-gu', 37.55871, 126.99567],
+  ['Sindang-dong', 37.55651, 127.01367],
+  ['Wangsimni', 37.56679, 127.02483],
+  ['Majang-dong', 37.56571, 127.0411],
+  ['Haengdang-dong', 37.55626, 127.03632],
+  ['Geumho-dong', 37.54868, 127.02005],
+  ['Oksu-dong', 37.53987, 127.02068],
+  ['Seongsu-dong', 37.53962, 127.05705],
+  ['Seogye-dong', 37.55088, 126.96613],
+  ['Wonhyo-ro', 37.53889, 126.96677],
+  ['Mapo-dong', 37.5362, 126.94317],
+  ['Hangang-ro', 37.53067, 126.96805],
+  ['Yongsan-gu', 37.53057, 126.97953],
+  ['Hannam-dong', 37.53659, 127.00505],
+  ['Bogwang-dong', 37.52617, 127.00071],
+  ['Ichon-dong', 37.51907, 126.97411],
+  ['Apgujeong-dong', 37.52984, 127.02866],
+  ['Sinsa-dong', 37.52313, 127.02675],
+  ['Cheongdam-dong', 37.52362, 127.05099],
+  ['Seongdong-gu', 37.54966, 127.0411],
+  ['Dongdaemun-gu', 37.58, 127.05514],
+  ['Hangang River', 37.53571, 127.03919],
+];
+
+let map;
+function initMap() {
+  map = new MiniMap(document.getElementById('map'), { center: CONFIG.center, zoom: CONFIG.zoom, minZoom: 12.5, maxZoom: 17.5, tiles: CONFIG.onlineTiles });
+  const DZ = 14.6;   // 이 확대 단계부터 자세한 남산 지도로 바뀜
+  map.addBase(WIDE_MAP_SVG, { n: 37.58856, w: 126.93711, s: 37.51408, e: 127.06802 }, { limits: true });
+  map.addBase(BASE_MAP_SVG, { n: 37.55999, w: 126.9685, s: 37.53873, e: 127.00433 }, { fromZ: DZ, cls: 'detail' });
+
+  // 동네 이름
+  [
+    ['Bongnae-dong', 37.55898, 126.9719],
+    ['Namchang-dong', 37.55793, 126.977],
+    ['Hoehyeon-dong', 37.55628, 126.98107],
+    ['Namsan-dong', 37.55854, 126.98561],
+    ['Pil-dong', 37.55865, 126.99495],
+    ['Yejang-dong', 37.55493, 126.99015],
+    ['Jangchung-dong', 37.5547, 127.00115],
+    ['Dongja-dong', 37.55165, 126.97156],
+    ['Huam-dong', 37.54939, 126.98015],
+    ['Galwol-dong', 37.5447, 126.97147],
+    ['Namyeong-dong', 37.54204, 126.97252],
+    ['Yongsan-dong', 37.54207, 126.98474],
+  ].forEach(([n, lat, lng]) => map.addMarker([lat, lng], `<span class="area">${n}</span>`, 0, 0, DZ));
+
+  // 넓은 지도용 동네 이름 (축소했을 때만)
+  WIDE_AREAS.forEach(([n, lat, lng]) => map.addMarker([lat, lng], `<span class="area">${n}</span>`, 0, 0, -99, DZ));
+
+  // 도로 이름
+  [
+    ['Toegye-ro', 37.5569, 126.97426, -27],
+    ['Sowol-ro', 37.55051, 126.98247, 62],
+    ['Huam-ro', 37.54955, 126.97679, 84],
+    ['Hangang-daero', 37.5479, 126.97161, -87],
+    ['Samil-daero', 37.5479, 126.99801, 62],
+    ['Noksapyeong-daero', 37.54859, 126.98579, 70],
+  ].forEach(([n, lat, lng, deg]) => map.addMarker([lat, lng], `<span class="road" style="transform:translate(-50%,-50%) rotate(${deg}deg)">${n}</span>`, 0, 0, DZ));
+
+  // 장소 (모두 같은 크기)
+  const ICON = {
+    sight:   { bg: '#2b2b2b', c: '#333333', svg: '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="5"/></svg>' },
+    shop:    { bg: '#2b2b2b', c: '#333333', svg: '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M3 4h2l2.5 11h11L21 7H7"/><circle cx="9" cy="20" r="2"/><circle cx="17" cy="20" r="2"/></svg>' },
+    museum:  { bg: '#2b2b2b', c: '#333333', svg: '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M12 2 2 7h20L12 2ZM4 9h3v9H4zm6.5 0h3v9h-3zM17 9h3v9h-3zM2 20h20v2H2z"/></svg>' },
+    park:    { bg: '#8a8a8a', c: '#7a7a7a', svg: '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M12 2 5 12h4l-4 6h6v4h2v-4h6l-4-6h4L12 2Z"/></svg>' },
+    station: { bg: '#2b2b2b', c: '#333333', svg: '<svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="3" width="12" height="14" rx="3"/><path d="M8 21l2-3h4l2 3" stroke="#fff" stroke-width="2" fill="none"/></svg>' },
+  };
+  [
+    ['N Seoul Tower', 37.5512, 126.98819, 'sight', -99],
+    ['Namsan Park', 37.5523, 126.99172, 'park'],
+    ['Baekbeom Square', 37.55497, 126.97871, 'park'],
+    ['Korean Forest Garden', 37.54227, 126.9939, 'park'],
+    ['Seoul Station', 37.5547, 126.9707, 'station', -99],
+    ['Namdaemun Market', 37.5596, 126.97711, 'shop', -99],
+    ['Sinheung Market', 37.54495, 126.98484, 'shop'],
+    ['Namsan Cable Car', 37.55679, 126.98369, 'sight'],
+    ['National Theater', 37.55292, 127.00038, 'museum'],
+    ['Gyeongbokgung Palace', 37.57878, 126.97666, 'museum', -99],
+    ['Bukchon Hanok Village', 37.58098, 126.98464, 'sight', -99],
+    ['Naksan Fortress Wall', 37.57755, 127.00843, 'sight', -99],
+    ['Cheonggyecheon', 37.56899, 126.97826, 'park', -99],
+    ['DDP', 37.56581, 127.0092, 'museum', -99],
+    ['National Museum of Korea', 37.5247, 126.98017, 'museum', -99],
+    ['War Memorial of Korea', 37.53669, 126.97666, 'museum', -99],
+    ['Leeum Museum of Art', 37.5384, 126.99912, 'museum', -99],
+    ['Garosu-gil', 37.51882, 127.02356, 'sight', -99],
+    ['Seoul Forest', 37.54378, 127.05067, 'park', -99],
+    ['Ttukseom Hangang Park', 37.52984, 127.06152, 'park', -99],
+  ].forEach(([n, lat, lng, t, minZ]) => {
+    const ic = ICON[t];
+    map.addMarker([lat, lng],
+      `<div class="poi"><span class="poi-icon" style="background:${ic.bg}">${ic.svg}</span><span class="poi-label" style="color:${ic.c}">${n}</span></div>`, 11, 11, minZ == null ? DZ : minZ);
+  });
+}
+initMap();
+
+/* =========================================================
+   동작
+   ========================================================= */
+const $ = id => document.getElementById(id);
+let toastTimer;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+$('centerBtn').onclick = () => map && map.flyTo(CONFIG.center, map.clampZ(CONFIG.zoom), { duration: .8 });
+
+// 로딩 아이콘 살대 12개
+$('spinner').innerHTML = Array.from({ length: 12 }, (_, i) =>
+  `<i style="transform:rotate(${i * 30}deg);opacity:${(1 - ((12 - i) % 12) * 0.075).toFixed(3)}"></i>`).join('');
+
+// 저장 목록
+const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+$('savedList').innerHTML = CONFIG.savedLists.map(l => {
+  const [m, d] = l.date.split('/').map(Number);
+  return `<li>
+    <div class="date"><b>${d}</b><small>${MONTHS[m - 1]}</small></div>
+    <div class="li-text">
+      <div class="li-title">${l.title}</div>
+      <div class="li-meta">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7a7a7a" stroke-width="2.2"><path d="M6.5 3.5h11v17l-5.5-3.6-5.5 3.6v-17Z"/></svg>
+        ${l.places} ${l.places === 1 ? 'place' : 'places'}
+      </div>
+    </div>
+    <span class="li-more"><svg width="18" height="18" viewBox="0 0 24 24" fill="#111111"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></span>
+  </li>`;
+}).join('');
+
+// 내 리뷰
+const star = on => `<svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8Z" fill="${on ? '#111' : '#dcdcdc'}"/></svg>`;
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+$('reviewList').innerHTML = CONFIG.reviews.map(r => `
+  <li class="review">
+    <div class="rv-head">
+      <div class="avatar">${esc(r.place.trim().charAt(0).toUpperCase())}</div>
+      <div class="rv-who">
+        <div class="rv-place">${esc(r.place)}</div>
+        <div class="rv-count">${r.photos.length} ${r.photos.length === 1 ? 'photo' : 'photos'}</div>
+      </div>
+    </div>
+    <div class="rv-rate">
+      <div class="stars">${[1,2,3,4,5].map(i => star(i <= r.stars)).join('')}</div>
+    </div>
+    <div class="rv-text">${esc(r.text)}</div>
+    ${r.photos.length ? `<div class="photos ${r.photos.length === 1 ? 'one' : ''}">
+      ${r.photos.slice(0, 2).map(src => `<div class="photo" style="background-image:url('${src}')"></div>`).join('')}
+    </div>` : ''}
+    <div class="rv-foot">
+      <button class="like" data-id="${esc(r.id)}" aria-label="Like" aria-pressed="false">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.2C1.4 7.9 3.6 4.5 7 4.5c2 0 3.7 1.1 5 2.9 1.3-1.8 3-2.9 5-2.9 3.4 0 5.6 3.4 4.3 6.8-1.8 4.6-9.3 9.2-9.3 9.2Z" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="like-count" data-count="${esc(r.id)}">0</span>
+    </div>
+  </li>`).join('');
+/* ---------- 좋아요 (각자 자기 화면에만 저장) ---------- */
+const likes = {
+  mine: (() => { try { return JSON.parse(localStorage.getItem('myLikes') || '{}'); } catch (e) { return {}; } })(),
+  save() { try { localStorage.setItem('myLikes', JSON.stringify(this.mine)); } catch (e) {} },
+  render(id) {
+    const on = !!this.mine[id];
+    document.querySelectorAll(`[data-count="${id}"]`).forEach(el => el.textContent = on ? 1 : 0);
+    document.querySelectorAll(`.like[data-id="${id}"]`).forEach(b => { b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  },
+  toggle(id) {
+    if (this.mine[id]) delete this.mine[id]; else this.mine[id] = 1;
+    this.save(); this.render(id);
+  },
+  init() { CONFIG.reviews.forEach(r => this.render(r.id)); },
+};
+$('reviewList').addEventListener('click', e => {
+  const b = e.target.closest('.like');
+  if (!b) return;
+  likes.toggle(b.dataset.id);
+  b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop');
+});
+likes.init();
+
+// 사진 길게 눌러 저장·확대 막기
+$('reviewList').addEventListener('contextmenu', e => e.preventDefault());
+
+function setTab(name) {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
+  const open = name === 'saved';
+  $('savedSheet').classList.toggle('open', open);
+  $('savedSheet').setAttribute('aria-hidden', String(!open));
+  $('app').classList.toggle('sheet-open', open);
+  if (open) { $('savedSheet').scrollTop = 0; fitSheet(); }
+}
+// 휴대폰: 처음 열릴 때 일정 목록까지만 보이게 (스크롤하면 리뷰)
+function fitSheet() {
+  const sh = $('savedSheet');
+  if (innerWidth >= 900) { sh.style.height = ''; return; }
+  const gapTop = sh.querySelector('.section-gap').offsetTop;
+  const navH = document.querySelector('.nav').offsetHeight;
+  sh.style.height = Math.min(gapTop + navH + 4, innerHeight * 0.9) + 'px';
+}
+window.addEventListener('resize', () => { if ($('savedSheet').classList.contains('open')) fitSheet(); });
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  const name = t.dataset.tab;
+  setTab(name === 'saved' && t.classList.contains('on') ? 'explore' : name);  // 한 번 더 누르면 닫힘
+});
+$('sheetClose').onclick = () => setTab('explore');
+$('map').addEventListener('pointerdown', () => {
+  if ($('savedSheet').classList.contains('open') && innerWidth < 900) setTab('explore');
+});
+
+// 목적지 입력
+$('dest').addEventListener('input', e => $('route').classList.toggle('typing', e.target.value.trim() !== ''));
+const norm = t => t.replace(/\s+/g, '').toLowerCase();
+function runLoading(ms, then, afterFade) {
+  $('toast').classList.remove('show');
+  openScreen('loading');
+  setTimeout(() => {
+    if (afterFade) {                      // 로딩이 사라지면서 어두운 배경이 겹쳐 나타나고, 팝업이 이어서 올라옴
+      then();
+      closeScreen('loading');
+    } else {
+      then(); setTimeout(() => closeScreen('loading'), 300);
+    }
+  }, ms);
+}
+$('route').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = $('dest');
+  const key = norm(input.value);
+  if (!key) { input.focus(); return; }
+
+  if (CONFIG.destiny.words.map(norm).includes(key)) {
+    input.blur();
+    runLoading(CONFIG.destiny.loadingMs, startGuide, true);
+    return;
+  }
+  const hit = CONFIG.searchPhotos.find(p => p.words.map(norm).includes(key));
+  if (hit) {
+    input.blur();
+    $('photoImg').src = hit.src;
+    runLoading(CONFIG.photoLoadingMs, () => openScreen('photoView'));
+    return;
+  }
+  const f = $('route');
+  f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake');
+  toast("This isn't the route you're looking for.");
+});
+
+// 운명: 안내 팝업 → 터치 시 두 번째 팝업 → 이후 아무 반응 없음
+let guideStep = 0;
+function startGuide() {
+  guideStep = 0;
+  $('guideText').textContent = CONFIG.destiny.messages[0];
+  openScreen('guide');
+}
+let fading = false;
+$('guide').addEventListener('click', () => {
+  if (fading) return;
+  if (guideStep >= CONFIG.destiny.messages.length - 1) { fadeToStart(); return; }   // 마지막 팝업 → 첫 화면으로
+  guideStep++;
+  $('guideText').textContent = CONFIG.destiny.messages[guideStep];
+  const card = document.querySelector('.guide-card');      // 두 번째 팝업도 같은 모션으로
+  card.style.animation = 'none'; void card.offsetWidth; card.style.animation = 'rise .42s cubic-bezier(.22,.9,.3,1) both';
+});
+// 하얗게 천천히 사라졌다가 첫 화면으로 천천히 돌아옴
+function fadeToStart() {
+  fading = true;
+  const w = $('whiteout'), ms = CONFIG.destiny.fadeMs;
+  w.style.setProperty('--fade-ms', ms + 'ms');
+  w.classList.add('on');
+  setTimeout(() => {
+    // 첫 화면 상태로 되돌리기
+    ['guide', 'photoView', 'roadview', 'loading'].forEach(closeScreen);
+    $('guide').style.transition = 'none';
+    $('dest').value = ''; $('route').classList.remove('typing');
+    setTab('explore');
+    if (map) map.setView(CONFIG.center, map.clampZ(CONFIG.zoom));
+    setTimeout(() => {
+      $('guide').style.transition = '';
+      w.classList.remove('on');
+      setTimeout(() => { fading = false; }, ms);
+    }, 250);
+  }, ms + 100);
+}
+
+// 뒤로가기 후 다시 들어와도 첫 화면으로
+window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
+
+function openScreen(id) { const s = $(id); s.classList.add('open'); s.setAttribute('aria-hidden', 'false'); }
+function closeScreen(id) { const s = $(id); s.classList.remove('open'); s.setAttribute('aria-hidden', 'true'); }
+$('photoClose').onclick = () => closeScreen('photoView');
+
+// 로드뷰 (영상)
+const video = $('rvVideo');
+$('streetBtn').onclick = () => {
+  openScreen('roadview');
+  video.muted = true;
+  video.currentTime = 0;
+  const p = video.play(); if (p) p.catch(() => {});
+};
+$('rvClose').onclick = () => { closeScreen('roadview'); video.pause(); };
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('roadview').classList.contains('open')) $('rvClose').onclick();
+  else if ($('photoView').classList.contains('open')) closeScreen('photoView');
+  else if ($('savedSheet').classList.contains('open')) setTab('explore');
+});
+</script>
+</body>
+</html>
